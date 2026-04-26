@@ -1,0 +1,6 @@
+# Solo permite acceso a archivos .php — no listado de directorio
+Options -Indexes
+<Files "*.php">
+  Order Allow,Deny
+  Allow from all
+</Files>
