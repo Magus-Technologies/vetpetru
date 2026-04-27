@@ -18,6 +18,8 @@ includes/config_tokens.php
 *.sqlite3
 database.sql
 vetpro.sql
+# … pero las migraciones SÍ se versionan
+!migrations/*.sql
 
 # ---------- Uploads y archivos generados por usuarios ----------
 public/uploads/*
