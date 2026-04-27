@@ -1,7 +1,9 @@
 <?php
 $page = 'facturacion'; $pageTitle = 'Facturación';
-require_once __DIR__ . '/../includes/header.php';
-$db = getDB();
+// OJO: el POST handler hace header('Location: ...'), así que debe ejecutarse
+// ANTES de incluir header.php (que ya empieza a imprimir HTML).
+$db   = getDB();
+$user = getUser();
 $action = $_GET['action'] ?? 'list';
 $msg = '';
 
@@ -76,14 +78,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                    ->execute([$caja, $user['id'], "Venta $serie-".str_pad($numero,5,'0',STR_PAD_LEFT), $total, $_POST['metodo_pago']??'efectivo', $venta_id]);
             }
 
-            // Emisión electrónica SUNAT (solo factura/boleta)
+            // Generación de XML (solo factura/boleta) — NO se envía a SUNAT todavía.
+            // El envío se hace luego con el botón "Enviar a SUNAT".
             $msg_extra = '';
             if (in_array($tipo, ['factura', 'boleta'], true)) {
                 require_once __DIR__ . '/../includes/config_sunat.php';
                 require_once __DIR__ . '/../includes/sunat/SunatService.php';
-                $sunat   = new SunatService($db);
-                $resul   = $sunat->emitir($venta_id);
-                $msg_extra = '&sunat=' . ($resul['ok'] ? 'ok' : 'err')
+                $sunat = new SunatService($db);
+                $resul = $sunat->generarXml($venta_id);
+                $msg_extra = '&sunat=' . ($resul['ok'] ? 'xml_ok' : 'xml_err')
                            . '&sunat_msg=' . urlencode($resul['mensaje']);
             }
 
@@ -100,7 +103,55 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $db->prepare("UPDATE ventas SET estado='pagado',metodo_pago=? WHERE id=?")->execute([$_POST['metodo_pago'],(int)$_POST['id']]);
         $msg='cobrado'; $action='list';
     }
+
+    // ── ENVIAR A SUNAT (manual, post-emisión) ──
+    if ($pa === 'enviar_sunat') {
+        $vid = (int)($_POST['id'] ?? 0);
+        require_once __DIR__ . '/../includes/config_sunat.php';
+        require_once __DIR__ . '/../includes/sunat/SunatService.php';
+        $sunat = new SunatService($db);
+        $resul = $sunat->enviarSunat($vid);
+        $qs    = '&sunat=' . ($resul['ok'] ? 'env_ok' : 'env_err')
+               . '&sunat_msg=' . urlencode($resul['mensaje']);
+        header('Location: '.BASE_URL.'/index.php?p=facturacion&action=ver&id='.$vid.$qs);
+        exit;
+    }
 }
+
+// Necesitamos SUNAT_RUC para nombrar el XML/CDR descargado.
+require_once __DIR__ . '/../includes/config_sunat.php';
+
+// ─── DESCARGAS XML / CDR (antes de imprimir HTML) ──────────────
+if (in_array($action, ['xml', 'cdr'], true) && !empty($_GET['id'])) {
+    $vid = (int)$_GET['id'];
+    $st  = $db->prepare("SELECT serie, numero, tipo_comprobante, sunat_xml, sunat_cdr FROM ventas WHERE id=?");
+    $st->execute([$vid]);
+    $v = $st->fetch();
+    if (!$v) { http_response_code(404); echo 'Venta no encontrada.'; exit; }
+
+    $tipo = $v['tipo_comprobante'] === 'factura' ? '01' : '03';
+    $base = SUNAT_RUC.'-'.$tipo.'-'.$v['serie'].'-'.str_pad($v['numero'], 8, '0', STR_PAD_LEFT);
+
+    if ($action === 'xml') {
+        if (empty($v['sunat_xml'])) { http_response_code(404); echo 'Esta venta no tiene XML generado.'; exit; }
+        $download = isset($_GET['dl']);
+        header('Content-Type: application/xml; charset=utf-8');
+        if ($download) header('Content-Disposition: attachment; filename="'.$base.'.xml"');
+        echo $v['sunat_xml'];
+        exit;
+    }
+
+    // action === 'cdr' → viene en base64; lo decodificamos a ZIP
+    if (empty($v['sunat_cdr'])) { http_response_code(404); echo 'Esta venta no tiene CDR (aún no fue aceptada por SUNAT).'; exit; }
+    $bin = base64_decode($v['sunat_cdr'], true);
+    header('Content-Type: application/zip');
+    header('Content-Disposition: attachment; filename="R-'.$base.'.zip"');
+    echo $bin !== false ? $bin : $v['sunat_cdr'];
+    exit;
+}
+
+// Ya pasamos los redirects → ahora sí podemos imprimir HTML.
+require_once __DIR__ . '/../includes/header.php';
 
 // ─── CARGAR VENTA PARA VER ──────────────────────────────────────
 $venta_detalle = null;
@@ -147,10 +198,18 @@ $total_periodo = array_sum(array_column(array_filter($ventas,fn($v)=>$v['estado'
 <?php if(($msg??'')==='success' || ($_GET['msg']??'')==='nuevo'): ?>
 <div class="alert alert-success mb-2">✅ Venta registrada exitosamente.</div>
 <?php endif; ?>
-<?php if(($_GET['sunat'] ?? '')==='ok'): ?>
-<div class="alert alert-success mb-2">📄 SUNAT: <?= clean($_GET['sunat_msg'] ?? 'Comprobante aceptado.') ?></div>
-<?php elseif(($_GET['sunat'] ?? '')==='err'): ?>
-<div class="alert alert-warn mb-2">⚠️ SUNAT: <?= clean($_GET['sunat_msg'] ?? 'Error al emitir.') ?></div>
+<?php
+$_sunat_flash = $_GET['sunat'] ?? '';
+$_sunat_msg   = clean($_GET['sunat_msg'] ?? '');
+?>
+<?php if($_sunat_flash==='xml_ok'): ?>
+<div class="alert alert-success mb-2">📄 XML generado: <?= $_sunat_msg ?: 'Listo para enviar a SUNAT.' ?></div>
+<?php elseif($_sunat_flash==='xml_err'): ?>
+<div class="alert alert-warn mb-2">⚠️ Error al generar XML: <?= $_sunat_msg ?></div>
+<?php elseif($_sunat_flash==='env_ok'): ?>
+<div class="alert alert-success mb-2">✅ SUNAT aceptó el comprobante. <?= $_sunat_msg ?></div>
+<?php elseif($_sunat_flash==='env_err'): ?>
+<div class="alert alert-warn mb-2">⚠️ SUNAT rechazó el envío: <?= $_sunat_msg ?></div>
 <?php endif; ?>
 <?php if(($msg??'')==='anulado'): ?><div class="alert alert-warn mb-2">⚠️ Venta anulada.</div><?php endif; ?>
 <?php if(($msg??'')==='cobrado'): ?><div class="alert alert-success mb-2">✅ Pago registrado.</div><?php endif; ?>
@@ -344,6 +403,50 @@ $total_periodo = array_sum(array_column(array_filter($ventas,fn($v)=>$v['estado'
     <div class="text-xs text-muted mt-2 text-center">Personaliza la cabecera en <a href="?p=plantillas" style="color:var(--blue)">Plantillas de Impresión</a></div>
   </div>
 
+  <!-- ─── PANEL SUNAT ─── -->
+  <?php if(in_array($venta_detalle['tipo_comprobante'], ['factura','boleta'], true)):
+      $se = $venta_detalle['sunat_estado'] ?? null;
+      $cls = $se==='aceptado' ? 'b-teal' : ($se==='rechazado' ? 'b-red' : ($se==='pendiente' ? 'b-amber' : 'b-gray'));
+      $lab = $se ? ucfirst($se) : 'Sin emitir';
+  ?>
+  <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px">
+    <div class="flex items-center justify-between mb-3">
+      <div class="flex items-center gap-2"><span style="font-size:18px">🏛️</span><div class="font-bold text-sm">SUNAT</div></div>
+      <span class="badge <?= $cls ?>"><span class="dot"></span> <?= $lab ?></span>
+    </div>
+
+    <?php if(!empty($venta_detalle['sunat_mensaje'])): ?>
+      <div class="text-xs text-muted mb-2"><?= clean($venta_detalle['sunat_mensaje']) ?></div>
+    <?php endif; ?>
+    <?php if(!empty($venta_detalle['sunat_hash'])): ?>
+      <div class="text-xs text-muted mb-2"><strong>Hash:</strong> <code style="font-size:11px"><?= clean($venta_detalle['sunat_hash']) ?></code></div>
+    <?php endif; ?>
+
+    <div class="flex gap-1 flex-wrap">
+      <?php if(!empty($venta_detalle['sunat_xml'])): ?>
+        <a href="?p=facturacion&action=xml&id=<?= $venta_detalle['id'] ?>" target="_blank" class="btn btn-sm">📄 Ver XML</a>
+        <a href="?p=facturacion&action=xml&id=<?= $venta_detalle['id'] ?>&dl=1" class="btn btn-sm">⬇ Descargar XML</a>
+      <?php endif; ?>
+
+      <?php if(!empty($venta_detalle['sunat_xml']) && $se !== 'aceptado'): ?>
+        <form method="POST" style="display:inline" onsubmit="return confirm('¿Enviar este comprobante a SUNAT?');">
+          <input type="hidden" name="action" value="enviar_sunat">
+          <input type="hidden" name="id" value="<?= $venta_detalle['id'] ?>">
+          <button type="submit" class="btn btn-sm btn-primary">📤 Enviar a SUNAT</button>
+        </form>
+      <?php endif; ?>
+
+      <?php if(!empty($venta_detalle['sunat_cdr'])): ?>
+        <a href="?p=facturacion&action=cdr&id=<?= $venta_detalle['id'] ?>" class="btn btn-sm">⬇ Descargar CDR</a>
+      <?php endif; ?>
+
+      <?php if(empty($venta_detalle['sunat_xml'])): ?>
+        <div class="text-xs text-muted">Esta venta no tiene XML aún. Vuelve a emitirla para regenerarlo.</div>
+      <?php endif; ?>
+    </div>
+  </div>
+  <?php endif; ?>
+
   <!-- COBRAR si pendiente -->
   <?php if($venta_detalle['estado']==='pendiente'): ?>
   <form method="POST" class="flex gap-1 mb-2">
@@ -424,7 +527,11 @@ $total_periodo = array_sum(array_column(array_filter($ventas,fn($v)=>$v['estado'
         <tr><th>Comprobante</th><th>Fecha</th><th>Cliente</th><th>Mascota</th><th>Total</th><th>Método</th><th>Estado</th><th>Acciones</th></tr>
       </thead>
       <tbody>
-        <?php foreach($ventas as $v): ?>
+        <?php foreach($ventas as $v):
+          $se  = $v['sunat_estado'] ?? null;
+          $sCl = $se==='aceptado' ? 'b-teal' : ($se==='rechazado' ? 'b-red' : ($se==='pendiente' ? 'b-amber' : 'b-gray'));
+          $sLb = $se ? ucfirst($se) : '—';
+        ?>
         <tr>
           <td class="td-main" style="color:var(--blue)"><?= $v['serie'] ?>-<?= str_pad($v['numero'],5,'0',STR_PAD_LEFT) ?></td>
           <td class="text-muted"><?= date('d/m/Y H:i',strtotime($v['fecha'])) ?></td>
@@ -432,10 +539,28 @@ $total_periodo = array_sum(array_column(array_filter($ventas,fn($v)=>$v['estado'
           <td class="text-muted"><?= clean($v['mascota']??'—') ?></td>
           <td class="font-bold">S/. <?= number_format($v['total'],2) ?></td>
           <td><span class="badge b-gray"><?= ucfirst(str_replace('_',' ',$v['metodo_pago'])) ?></span></td>
-          <td><span class="badge <?= $v['estado']==='pagado'?'b-teal':($v['estado']==='anulado'?'b-red':'b-amber') ?>"><span class="dot"></span> <?= ucfirst($v['estado']) ?></span></td>
+          <td>
+            <span class="badge <?= $v['estado']==='pagado'?'b-teal':($v['estado']==='anulado'?'b-red':'b-amber') ?>"><span class="dot"></span> <?= ucfirst($v['estado']) ?></span>
+            <?php if(in_array($v['tipo_comprobante'], ['factura','boleta'], true)): ?>
+              <span class="badge <?= $sCl ?>" style="margin-top:2px">SUNAT: <?= $sLb ?></span>
+            <?php endif; ?>
+          </td>
           <td>
             <div class="flex gap-1">
               <a href="?p=facturacion&action=ver&id=<?= $v['id'] ?>" class="btn btn-xs">Ver</a>
+              <?php if(!empty($v['sunat_xml'])): ?>
+                <a href="?p=facturacion&action=xml&id=<?= $v['id'] ?>" target="_blank" class="btn btn-xs" title="Ver XML">📄</a>
+              <?php endif; ?>
+              <?php if(!empty($v['sunat_xml']) && $se !== 'aceptado'): ?>
+                <form method="POST" style="display:inline" onsubmit="return confirm('¿Enviar a SUNAT?');">
+                  <input type="hidden" name="action" value="enviar_sunat">
+                  <input type="hidden" name="id" value="<?= $v['id'] ?>">
+                  <button type="submit" class="btn btn-xs btn-primary" title="Enviar a SUNAT">📤</button>
+                </form>
+              <?php endif; ?>
+              <?php if(!empty($v['sunat_cdr'])): ?>
+                <a href="?p=facturacion&action=cdr&id=<?= $v['id'] ?>" class="btn btn-xs" title="Descargar CDR">⬇</a>
+              <?php endif; ?>
               <?php if($v['estado']==='pagado'): ?>
               <div style="position:relative" onmouseenter="this.querySelector('.pm').style.display='block'" onmouseleave="this.querySelector('.pm').style.display='none'">
                 <button class="btn btn-xs">🖨️ ▾</button>
