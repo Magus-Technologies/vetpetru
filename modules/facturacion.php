@@ -75,7 +75,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare("INSERT INTO movimientos_caja (caja_id,usuario_id,tipo,concepto,monto,metodo_pago,categoria,venta_id) VALUES (?,?,'ingreso',?,?,?,'servicio',?)")
                    ->execute([$caja, $user['id'], "Venta $serie-".str_pad($numero,5,'0',STR_PAD_LEFT), $total, $_POST['metodo_pago']??'efectivo', $venta_id]);
             }
-            header('Location: '.BASE_URL.'/index.php?p=facturacion&action=ver&id='.$venta_id.'&msg=nuevo');
+
+            // Emisión electrónica SUNAT (solo factura/boleta)
+            $msg_extra = '';
+            if (in_array($tipo, ['factura', 'boleta'], true)) {
+                require_once __DIR__ . '/../includes/config_sunat.php';
+                require_once __DIR__ . '/../includes/sunat/SunatService.php';
+                $sunat   = new SunatService($db);
+                $resul   = $sunat->emitir($venta_id);
+                $msg_extra = '&sunat=' . ($resul['ok'] ? 'ok' : 'err')
+                           . '&sunat_msg=' . urlencode($resul['mensaje']);
+            }
+
+            header('Location: '.BASE_URL.'/index.php?p=facturacion&action=ver&id='.$venta_id.'&msg=nuevo'.$msg_extra);
             exit;
         }
     }
@@ -134,6 +146,11 @@ $total_periodo = array_sum(array_column(array_filter($ventas,fn($v)=>$v['estado'
 <?php endif; ?>
 <?php if(($msg??'')==='success' || ($_GET['msg']??'')==='nuevo'): ?>
 <div class="alert alert-success mb-2">✅ Venta registrada exitosamente.</div>
+<?php endif; ?>
+<?php if(($_GET['sunat'] ?? '')==='ok'): ?>
+<div class="alert alert-success mb-2">📄 SUNAT: <?= clean($_GET['sunat_msg'] ?? 'Comprobante aceptado.') ?></div>
+<?php elseif(($_GET['sunat'] ?? '')==='err'): ?>
+<div class="alert alert-warn mb-2">⚠️ SUNAT: <?= clean($_GET['sunat_msg'] ?? 'Error al emitir.') ?></div>
 <?php endif; ?>
 <?php if(($msg??'')==='anulado'): ?><div class="alert alert-warn mb-2">⚠️ Venta anulada.</div><?php endif; ?>
 <?php if(($msg??'')==='cobrado'): ?><div class="alert alert-success mb-2">✅ Pago registrado.</div><?php endif; ?>

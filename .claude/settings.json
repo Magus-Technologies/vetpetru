@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/laragon/www/api-sunat-laravel/**)",
+      "Read(//c/laragon/www/api-sunat-laravel/routes/**)"
+    ]
+  }
+}

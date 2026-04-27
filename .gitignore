@@ -2,8 +2,10 @@
 # VetPro — .gitignore
 # ============================================================
 
-# ---------- Configuración sensible (NUNCA subir) ----------
-includes/config.php
+# ---------- Configuración sensible ----------
+# config.php y config_sunat.php se versionan: detectan entorno
+# (local vs producción) por hostname y traen ambos bloques.
+# Solo se ignora el de tokens externos.
 includes/config_tokens.php
 .env
 .env.*

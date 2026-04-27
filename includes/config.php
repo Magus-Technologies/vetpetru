@@ -1,31 +1,55 @@
 <?php
 // ============================================================
 // VetPro - Configuración del Sistema
-// Ajusta estos valores según tu servidor
+// ─────────────────────────────────────────────────────────
+// Auto-detecta entorno (LOCAL vs PRODUCCIÓN) por hostname.
+// No hace falta cambiar nada al subir al servidor.
 // ============================================================
 
-define('DB_HOST', 'localhost');
-define('DB_NAME', 'vetpro');
-define('DB_USER', 'root');   // Cambia por tu usuario MySQL
-define('DB_PASS', 'c4p1cu4$$');   // Cambia por tu contraseña MySQL
-define('DB_CHARSET', 'utf8mb4');
+// ─── Detección de entorno ─────────────────────────────────────
+// Si la petición viene de localhost (o estamos en CLI dentro de
+// la máquina del dev), usamos config local. Si no, producción.
+$__host = $_SERVER['HTTP_HOST'] ?? gethostname();
+$__isLocal = (
+    str_contains($__host, 'localhost') ||
+    str_contains($__host, '127.0.0.1') ||
+    str_contains($__host, '.test')     ||
+    str_contains($__host, '.local')
+);
 
-define('BASE_URL',    'https://magus-ecommerce.com/vetpro');
-define('BASE_PATH',   dirname(__DIR__));                          // raíz de /vetpro/
+if ($__isLocal) {
+    // ════════ LOCAL (Laragon) ════════
+    define('DB_HOST', 'localhost');
+    define('DB_NAME', 'vetpro');
+    define('DB_USER', 'root');
+    define('DB_PASS', '');
+    define('BASE_URL', 'http://localhost/vetPro');
+    define('APP_ENV',  'development');
+    define('MIGRATIONS_TOKEN', 'dev_local_token_no_importa');
+} else {
+    // ════════ PRODUCCIÓN (magus-ecommerce.com) ════════
+    define('DB_HOST', 'localhost');
+    define('DB_NAME', 'vetpro');
+    define('DB_USER', 'root');
+    define('DB_PASS', 'c4p1cu4$$');
+    define('BASE_URL', 'https://magus-ecommerce.com/vetpro');
+    define('APP_ENV',  'production');
+    define('MIGRATIONS_TOKEN', 'CAMBIAR_POR_TOKEN_LARGO_Y_ALEATORIO');
+}
+
+define('DB_CHARSET', 'utf8mb4');
+define('BASE_PATH',   dirname(__DIR__));
 define('UPLOADS_PATH', BASE_PATH . '/public/uploads');
 define('UPLOADS_URL',  BASE_URL  . '/public/uploads');
 
 define('APP_NAME', 'VetPro');
 define('APP_VERSION', '1.0.0');
-define('APP_ENV', 'production'); // 'development' o 'production'
 
 define('SESSION_NAME', 'vetpro_session');
 define('SESSION_LIFETIME', 28800); // 8 horas
 
-// Timezone
 date_default_timezone_set('America/Lima');
 
-// Iniciar sesión
 session_name(SESSION_NAME);
 session_start();
 
@@ -51,22 +75,11 @@ function getDB() {
     return $pdo;
 }
 
-// Helper: usuario logueado
-function getUser() {
-    return $_SESSION['user'] ?? null;
-}
-
-function isLogged() {
-    return isset($_SESSION['user']);
-}
-
+function getUser()      { return $_SESSION['user'] ?? null; }
+function isLogged()     { return isset($_SESSION['user']); }
 function requireLogin() {
-    if (!isLogged()) {
-        header('Location: ' . BASE_URL . '/login.php');
-        exit;
-    }
+    if (!isLogged()) { header('Location: ' . BASE_URL . '/login.php'); exit; }
 }
-
 function hasRole($roles) {
     $user = getUser();
     if (!$user) return false;
@@ -74,7 +87,6 @@ function hasRole($roles) {
     return in_array($user['rol'], $roles);
 }
 
-// Helper: respuesta JSON para API
 function jsonResponse($data, $code = 200) {
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
@@ -82,21 +94,18 @@ function jsonResponse($data, $code = 200) {
     exit;
 }
 
-// Helper: sanitize
 function clean($str) {
     return htmlspecialchars(trim($str ?? ''), ENT_QUOTES, 'UTF-8');
 }
 
-// Helper: formatear moneda peruana
 function formatMoney($amount) {
     return 'S/. ' . number_format($amount, 2);
 }
 
-// Helper: formatear fecha en español
 function formatDate($date) {
     if (!$date) return '—';
     $ts = strtotime($date);
-    $dias = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
+    $dias  = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
     $meses = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
     return $dias[date('w',$ts)] . ', ' . date('d',$ts) . ' de ' . $meses[(int)date('n',$ts)] . ' ' . date('Y',$ts);
 }
