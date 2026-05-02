@@ -80,7 +80,7 @@ if ($tipo === 'dni') {
     }
 
     // Fuente 2: dniruc.apisperu.com (gratuita básica)
-    $body = httpGet("https://dniruc.apisperu.com/api/v1/dni/{$numero}?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6InZldHByb0B2ZXRwcm8ucGUifQ.FREE_TOKEN_PLACEHOLDER");
+    $body = httpGet("https://dniruc.apisperu.com/api/v1/dni/{$numero}?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6InN5c3RlbWNyYWZ0LnBlQGdtYWlsLmNvbSJ9.yuNS5hRaC0hCwymX_PjXRoSZJWLNNBeOdlLRSUGlHGA");
     if ($body) {
         $data = json_decode($body, true);
         if (!empty($data['nombres'])) {
@@ -139,7 +139,7 @@ if ($tipo === 'ruc') {
     }
 
     // Fuente 2: dniruc.apisperu.com
-    $body = httpGet("https://dniruc.apisperu.com/api/v1/ruc/{$numero}?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6InZldHByb0B2ZXRwcm8ucGUifQ.FREE_TOKEN_PLACEHOLDER");
+    $body = httpGet("https://dniruc.apisperu.com/api/v1/ruc/{$numero}?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJlbWFpbCI6InN5c3RlbWNyYWZ0LnBlQGdtYWlsLmNvbSJ9.yuNS5hRaC0hCwymX_PjXRoSZJWLNNBeOdlLRSUGlHGA");
     if ($body) {
         $data = json_decode($body, true);
         if (!empty($data['razonSocial'])) {
