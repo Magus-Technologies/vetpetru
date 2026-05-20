@@ -128,17 +128,28 @@ if ($action==='nueva'): ?>
 
     <div class="card">
       <div class="sec-box-title">👤 Paciente y datos generales</div>
+      <?php
+      $_hc_mas_js  = array_map(fn($m)=>['id'=>$m['id'],'label'=>$m['label']], $mascotas_sel);
+      $_hc_vet_js  = array_map(fn($v)=>['id'=>$v['id'],'label'=>$v['nombre']], $vets_sel);
+      $_hc_mas_pre = $mascota_pre ? $mascotas_sel[array_search($mascota_id, array_column($mascotas_sel,'id'))] ?? null : null;
+      $_hc_vet_pre = array_filter($vets_sel, fn($v)=>$v['id']==$user['id']); $_hc_vet_pre = $_hc_vet_pre ? reset($_hc_vet_pre) : ($vets_sel[0]??null);
+      ?>
       <div class="form-row">
-        <div class="form-group"><label class="form-label required">Paciente</label>
-          <select class="form-input" name="mascota_id" required>
-            <option value="">— Seleccionar —</option>
-            <?php foreach($mascotas_sel as $ms): ?><option value="<?= $ms['id'] ?>" <?= $mascota_id==$ms['id']?'selected':'' ?>><?= clean($ms['label']) ?></option><?php endforeach; ?>
-          </select>
+        <div class="form-group" style="position:relative">
+          <label class="form-label required">Paciente</label>
+          <input type="text" id="inp-mas-hc" class="form-input" placeholder="🐾 Buscar mascota..."
+                 value="<?= $mascota_pre?clean($mascota_pre['nombre'].' ('.$mascota_pre['dueno'].')'):'' ?>"
+                 autocomplete="off">
+          <input type="hidden" name="mascota_id" id="hid-mas-hc" value="<?= $mascota_id ?>" required>
+          <div id="drop-mas-hc" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:220px;overflow-y:auto"></div>
         </div>
-        <div class="form-group"><label class="form-label required">Veterinario</label>
-          <select class="form-input" name="veterinario_id" required>
-            <?php foreach($vets_sel as $v): ?><option value="<?= $v['id'] ?>" <?= $v['id']==$user['id']?'selected':'' ?>><?= clean($v['nombre']) ?></option><?php endforeach; ?>
-          </select>
+        <div class="form-group" style="position:relative">
+          <label class="form-label required">Veterinario</label>
+          <input type="text" id="inp-vet-hc" class="form-input" placeholder="👨‍⚕️ Buscar veterinario..."
+                 value=""
+                 autocomplete="off">
+          <input type="hidden" name="veterinario_id" id="hid-vet-hc" value="" required>
+          <div id="drop-vet-hc" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:200px;overflow-y:auto"></div>
         </div>
       </div>
       <div class="form-row">
@@ -383,6 +394,14 @@ function aplicarPlantilla(id) {
   document.getElementById('plantilla_usada').value = pl.nombre;
   document.getElementById('sel-plantilla').style.display = 'none';
 }
+
+// Inicializar buscadores de paciente y veterinario
+var _HC_MAS = <?= json_encode(array_values($_hc_mas_js??[])) ?>;
+var _HC_VET = <?= json_encode(array_values($_hc_vet_js??[])) ?>;
+document.addEventListener('DOMContentLoaded', function() {
+    vetSearchSelect('inp-mas-hc','drop-mas-hc','hid-mas-hc', _HC_MAS, 'label');
+    vetSearchSelect('inp-vet-hc','drop-vet-hc','hid-vet-hc', _HC_VET, 'label');
+});
 </script>
 
 <?php

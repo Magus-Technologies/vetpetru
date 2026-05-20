@@ -1,11 +1,35 @@
 <?php
 $page = 'facturacion'; $pageTitle = 'Facturación';
-// OJO: el POST handler hace header('Location: ...'), así que debe ejecutarse
-// ANTES de incluir header.php (que ya empieza a imprimir HTML).
 $db   = getDB();
 $user = getUser();
 $action = $_GET['action'] ?? 'list';
 $msg = '';
+
+// ── Función global: serie según sede ─────────────────────────
+function getSerieParaSede($db, $tipo_comp, $sede_id) {
+    $clave = $tipo_comp === 'factura' ? 'serie_factura' :
+             ($tipo_comp === 'ticket'  ? 'serie_ticket'  : 'serie_boleta');
+    // 1. Buscar en configuracion_sede (específica por sede)
+    try {
+        $st = $db->prepare("SELECT valor FROM configuracion_sede WHERE sede_id=? AND clave=?");
+        $st->execute([$sede_id, $clave]);
+        $v = $st->fetchColumn();
+        if ($v) return $v;
+    } catch(Exception $e) {}
+    // 2. Si es sede 1, buscar en config global
+    if ($sede_id == 1) {
+        try {
+            $st = $db->prepare("SELECT valor FROM configuracion WHERE clave=?");
+            $st->execute([$clave]);
+            $v = $st->fetchColumn();
+            if ($v) return $v;
+        } catch(Exception $e) {}
+    }
+    // 3. Generar automáticamente: F+sede, B+sede, T+sede
+    // Sede 1 → F001/B001/T001, Sede 2 → F002/B002/T002, etc.
+    $pref = $tipo_comp === 'factura' ? 'F' : ($tipo_comp === 'ticket' ? 'T' : 'B');
+    return $pref . str_pad($sede_id, 3, '0', STR_PAD_LEFT);
+}
 
 // ─── POST HANDLER ──────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -15,30 +39,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($pa === 'save') {
         $cliente_id = (int)$_POST['cliente_id'];
         $tipo  = $_POST['tipo_comprobante'] ?? 'boleta';
-        // ── Serie según sede activa ──────────────────────────────
         $sede_id_actual = getSede();
-        // Buscar serie configurada para esta sede
-        function getSerieParaSede($db, $tipo_comp, $sede_id) {
-            $clave = $tipo_comp === 'factura' ? 'serie_factura' :
-                     ($tipo_comp === 'ticket'  ? 'serie_ticket'  : 'serie_boleta');
-            // Primero buscar en configuracion_sede
-            try {
-                $st = $db->prepare("SELECT valor FROM configuracion_sede WHERE sede_id=? AND clave=?");
-                $st->execute([$sede_id, $clave]);
-                $v = $st->fetchColumn();
-                if ($v) return $v;
-            } catch(Exception $e) {}
-            // Fallback: config global o default
-            try {
-                $st = $db->prepare("SELECT valor FROM configuracion WHERE clave=?");
-                $st->execute([$clave]);
-                $v = $st->fetchColumn();
-                if ($v) return $v;
-            } catch(Exception $e) {}
-            // Default: F001, B001, T001
-            $pref = $tipo_comp === 'factura' ? 'F' : ($tipo_comp === 'ticket' ? 'T' : 'B');
-            return $pref . str_pad($sede_id, 3, '0', STR_PAD_LEFT);
-        }
         $serie = getSerieParaSede($db, $tipo, $sede_id_actual);
 
         $st = $db->prepare("SELECT COALESCE(MAX(numero),0)+1 FROM ventas WHERE serie=?");
@@ -213,13 +214,29 @@ if ($action === 'ver' && !empty($_GET['id'])) {
 }
 
 // ─── DATOS PARA SELECTS ─────────────────────────────────────────
-$clientes_sel  = $db->query("SELECT id,nombre,telefono FROM clientes WHERE activo=1 ORDER BY nombre")->fetchAll();
-$mascotas_sel  = $db->query("SELECT m.id,CONCAT(m.nombre,' (',c.nombre,')') as label,m.cliente_id FROM mascotas m JOIN clientes c ON c.id=m.cliente_id WHERE m.estado='activo' ORDER BY m.nombre")->fetchAll();
-$servicios_sel  = $db->query("SELECT id,nombre,precio FROM servicios WHERE activo=1 ORDER BY tipo,nombre")->fetchAll();
-$productos_sel  = $db->query("SELECT id,nombre,precio_venta as precio FROM productos WHERE activo=1 AND stock>0 ORDER BY nombre")->fetchAll();
-// Pet Shop
+$_fac_sid = getSede();
+$_fac_all = verTodasSedes();
+
+// Filtros seguros — solo si la columna sede_id existe en cada tabla
+$_fac_sw  = ""; // productos, clientes (sin alias)
+$_fac_swm = ""; // mascotas m
+$_fac_swp = ""; // petshop_productos p
+
+if (!$_fac_all) {
+    try { $r=$db->query("SHOW COLUMNS FROM `clientes` LIKE 'sede_id'")->fetchAll(); if(!empty($r)) $_fac_sw=" AND sede_id=$_fac_sid"; } catch(Exception $e){}
+    try { $r=$db->query("SHOW COLUMNS FROM `mascotas` LIKE 'sede_id'")->fetchAll(); if(!empty($r)) $_fac_swm=" AND m.sede_id=$_fac_sid"; } catch(Exception $e){}
+    try { $r=$db->query("SHOW COLUMNS FROM `productos` LIKE 'sede_id'")->fetchAll(); if(!empty($r)) $_fac_sw_prod=" AND sede_id=$_fac_sid"; } catch(Exception $e){ $_fac_sw_prod=""; }
+    try { $r=$db->query("SHOW COLUMNS FROM `petshop_productos` LIKE 'sede_id'")->fetchAll(); if(!empty($r)) $_fac_swp=" AND p.sede_id=$_fac_sid"; } catch(Exception $e){}
+} else {
+    $_fac_sw_prod = "";
+}
+
+$clientes_sel  = $db->query("SELECT id,nombre,telefono,COALESCE(dni,'') as dni,COALESCE(ruc,'') as ruc FROM clientes WHERE activo=1$_fac_sw ORDER BY nombre")->fetchAll();
+$mascotas_sel  = $db->query("SELECT m.id,CONCAT(m.nombre,' (',c.nombre,')') as label,m.cliente_id FROM mascotas m JOIN clientes c ON c.id=m.cliente_id WHERE m.estado='activo'$_fac_swm ORDER BY m.nombre")->fetchAll();
+$servicios_sel = $db->query("SELECT id,nombre,precio FROM servicios WHERE activo=1 ORDER BY tipo,nombre")->fetchAll();
+$productos_sel = $db->query("SELECT id,nombre,precio_venta as precio FROM productos WHERE activo=1 AND stock>0".($_fac_sw_prod??" ")." ORDER BY nombre")->fetchAll();
 try {
-    $petshop_sel = $db->query("SELECT p.id, CONCAT(p.nombre, IFNULL(CONCAT(' (', p.contenido, ')'), '')) as nombre, p.precio_venta as precio FROM petshop_productos p WHERE p.activo=1 AND p.stock>0 ORDER BY p.nombre")->fetchAll();
+    $petshop_sel = $db->query("SELECT p.id, CONCAT(p.nombre, IFNULL(CONCAT(' (',p.contenido,')'), '')) as nombre, p.precio_venta as precio FROM petshop_productos p WHERE p.activo=1 AND p.stock>0$_fac_swp ORDER BY p.nombre")->fetchAll();
 } catch(Exception $e) { $petshop_sel = []; }
 
 // ─── LISTA DE VENTAS ────────────────────────────────────────────
@@ -262,54 +279,93 @@ $_sunat_msg   = clean($_GET['sunat_msg'] ?? '');
 
 <?php if($action==='nueva'): ?>
 <!-- ════════════════════════════ NUEVA VENTA ════════════════════════════ -->
-<div class="card" style="max-width:820px">
-  <div class="sec-header"><div class="sec-title">Nueva Venta</div><a href="?p=facturacion" class="btn btn-sm">← Volver</a></div>
+<?php
+$_sede_fac = getSede();
+$_series_fac = [];
+// Calcular series para TODAS las sedes (para que JS pueda cambiar sin reload)
+try { $_todas_sedes = $db->query("SELECT id FROM sedes")->fetchAll(PDO::FETCH_COLUMN); } catch(Exception $e){ $_todas_sedes=[$_sede_fac]; }
+foreach ($_todas_sedes as $_s) {
+    foreach (['boleta','factura','ticket'] as $_tc) {
+        $_serie = getSerieParaSede($db, $_tc, $_s);
+        try { $_st=$db->prepare("SELECT COALESCE(MAX(numero),0)+1 FROM ventas WHERE serie=?"); $_st->execute([$_serie]); $_sig=(int)$_st->fetchColumn(); } catch(Exception $e){ $_sig=1; }
+        $_series_fac[$_s][$_tc] = ['serie'=>$_serie,'numero'=>str_pad($_sig,6,'0',STR_PAD_LEFT)];
+    }
+}
+$_series_sede_actual = $_series_fac[$_sede_fac] ?? $_series_fac[1] ?? [];
+// Datos JS clientes y mascotas
+$_cli_js = array_map(fn($c)=>['id'=>$c['id'],'nombre'=>$c['nombre'],'dni'=>$c['dni']??'','ruc'=>$c['ruc']??''], $clientes_sel);
+$_mas_js = array_map(fn($m)=>['id'=>$m['id'],'label'=>$m['label'],'cliente_id'=>$m['cliente_id']], $mascotas_sel);
+?>
+<div class="card" style="max-width:860px">
+  <div class="sec-header mb-3"><div class="sec-title">Nueva Venta</div><a href="?p=facturacion" class="btn btn-sm btn-ghost">← Volver</a></div>
   <form method="POST" id="venta-form">
     <input type="hidden" name="action" value="save">
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Cliente *</label>
-        <select class="form-input" name="cliente_id" id="sel-cli" required onchange="filterMascotas(this.value)">
-          <option value="">— Seleccionar —</option>
-          <?php foreach($clientes_sel as $c): ?><option value="<?= $c['id'] ?>"><?= clean($c['nombre']) ?></option><?php endforeach; ?>
-        </select>
+
+    <!-- CLIENTE + MASCOTA con buscador -->
+    <div class="form-row" style="gap:12px;margin-bottom:12px">
+      <div class="form-group" style="position:relative">
+        <label class="form-label required">Cliente</label>
+        <input type="text" id="cli-busq" class="form-input" placeholder="🔍 Nombre, DNI o RUC..."
+               autocomplete="off" oninput="buscarCliente(this.value)"
+               onblur="setTimeout(function(){document.getElementById('cli-drop').style.display='none'},200)">
+        <input type="hidden" name="cliente_id" id="cli-id" required>
+        <div id="cli-drop" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:400;max-height:220px;overflow-y:auto"></div>
+        <div id="cli-sel" style="display:none;margin-top:4px;padding:7px 10px;background:rgba(30,168,161,.1);border-radius:8px;font-size:13px;align-items:center;justify-content:space-between">
+          <span id="cli-sel-nom" style="font-weight:600;color:var(--primary-d)"></span>
+          <button type="button" onclick="limpiarCliente()" style="background:none;border:none;color:var(--text3);cursor:pointer">✕</button>
+        </div>
       </div>
-      <div class="form-group"><label class="form-label">Mascota</label>
-        <select class="form-input" name="mascota_id" id="sel-mas">
-          <option value="">— Opcional —</option>
-          <?php foreach($mascotas_sel as $m): ?><option value="<?= $m['id'] ?>" data-cli="<?= $m['cliente_id'] ?>"><?= clean($m['label']) ?></option><?php endforeach; ?>
-        </select>
+      <div class="form-group" style="position:relative">
+        <label class="form-label">Mascota <span style="color:var(--text3);font-weight:400">(opcional)</span></label>
+        <input type="text" id="mas-busq" class="form-input" placeholder="🐾 Buscar mascota..."
+               autocomplete="off" oninput="buscarMascota(this.value)"
+               onblur="setTimeout(function(){document.getElementById('mas-drop').style.display='none'},200)">
+        <input type="hidden" name="mascota_id" id="mas-id">
+        <div id="mas-drop" style="display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:400;max-height:200px;overflow-y:auto"></div>
+        <div id="mas-sel" style="display:none;margin-top:4px;padding:7px 10px;background:var(--bg3);border-radius:8px;font-size:13px;align-items:center;justify-content:space-between">
+          <span id="mas-sel-nom" style="font-weight:600"></span>
+          <button type="button" onclick="limpiarMascota()" style="background:none;border:none;color:var(--text3);cursor:pointer">✕</button>
+        </div>
       </div>
     </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Tipo Documento</label>
-        <select class="form-input" name="tipo_comprobante" id="sel-tipo" onchange="actualizarSerieNumero()">
+
+    <!-- TIPO DOC + SERIE + NÚMERO + CONDICIÓN -->
+    <div style="display:grid;grid-template-columns:1.4fr 0.8fr 0.9fr 1fr;gap:10px;margin-bottom:12px">
+      <div class="form-group">
+        <label class="form-label">Tipo Documento</label>
+        <select class="form-input" name="tipo_comprobante" id="sel-tipo" onchange="actualizarSerieNum()">
           <option value="boleta">BOLETA</option>
           <option value="factura">FACTURA</option>
           <option value="ticket">NOTA DE VENTA</option>
         </select>
       </div>
-      <div class="form-group"><label class="form-label">Serie</label>
+      <div class="form-group">
+        <label class="form-label">Serie</label>
         <input class="form-input" id="disp-serie" readonly
-               style="background:var(--bg3);font-weight:700;letter-spacing:2px;color:var(--primary)"
-               value="" placeholder="—">
+               style="background:var(--bg3);font-weight:800;letter-spacing:2px;color:var(--primary);text-align:center;cursor:default">
       </div>
-      <div class="form-group"><label class="form-label">N° Documento</label>
+      <div class="form-group">
+        <label class="form-label">N° Documento</label>
         <input class="form-input" id="disp-numero" readonly
-               style="background:var(--bg3);font-weight:700;font-size:16px;color:var(--text)"
-               value="" placeholder="—">
+               style="background:var(--bg3);font-weight:800;font-size:15px;text-align:center;cursor:default">
       </div>
-      <div class="form-group"><label class="form-label">Condición de Pago</label>
+      <div class="form-group">
+        <label class="form-label">Condición Pago</label>
         <select class="form-input" name="condicion_pago">
           <option value="contado">Contado</option>
           <option value="credito">Crédito</option>
         </select>
       </div>
     </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Fecha Emisión</label>
+
+    <!-- FECHA + MÉTODO -->
+    <div class="form-row" style="gap:12px;margin-bottom:12px">
+      <div class="form-group">
+        <label class="form-label">Fecha Emisión</label>
         <input class="form-input" type="date" name="fecha_emision" value="<?= date('Y-m-d') ?>">
       </div>
-      <div class="form-group"><label class="form-label">Método de pago</label>
+      <div class="form-group">
+        <label class="form-label">Método de pago</label>
         <select class="form-input" name="metodo_pago">
           <option value="efectivo">Efectivo</option>
           <option value="yape">Yape</option>
@@ -654,47 +710,124 @@ $_sunat_msg   = clean($_GET['sunat_msg'] ?? '');
 var SERVICIOS = <?= json_encode(array_values(array_map(fn($s)=>['id'=>(int)$s['id'],'nombre'=>$s['nombre'],'precio'=>(float)$s['precio']], $servicios_sel))) ?>;
 var PRODUCTOS = <?= json_encode(array_values(array_map(fn($p)=>['id'=>(int)$p['id'],'nombre'=>$p['nombre'],'precio'=>(float)$p['precio']], $productos_sel))) ?>;
 var PETSHOP   = <?= json_encode(array_values(array_map(fn($p)=>['id'=>(int)$p['id'],'nombre'=>$p['nombre'],'precio'=>(float)$p['precio']], $petshop_sel))) ?>;
-var itemIdx = 0;
+var CLIENTES  = <?= json_encode(array_values($_cli_js ?? [])) ?>;
+var MASCOTAS  = <?= json_encode(array_values($_mas_js ?? [])) ?>;
+var SERIES    = <?= json_encode($_series_sede_actual) ?>;
+var itemIdx   = 0;
+var _cliSel   = null;
 
-// Series y correlativos por tipo de comprobante (calculados en PHP)
-<?php
-// Calcular series y próximos números para cada tipo de esta sede
-$sede_actual = getSede();
-$tipos_comp = ['boleta','factura','ticket'];
-$series_data = [];
-foreach ($tipos_comp as $tc) {
-    $serie = getSerieParaSede($db, $tc, $sede_actual);
-    try {
-        $st = $db->prepare("SELECT COALESCE(MAX(numero),0)+1 FROM ventas WHERE serie=?");
-        $st->execute([$serie]);
-        $siguiente = (int)$st->fetchColumn();
-    } catch(Exception $e) { $siguiente = 1; }
-    $series_data[$tc] = [
-        'serie'   => $serie,
-        'numero'  => str_pad($siguiente, 6, '0', STR_PAD_LEFT),
-        'siguiente'=> $siguiente,
-    ];
-}
-?>
-var SERIES_DATA = <?= json_encode($series_data) ?>;
-
-function actualizarSerieNumero() {
+// ── SERIE Y NÚMERO ──
+function actualizarSerieNum() {
     var tipo = document.getElementById('sel-tipo').value;
-    var data = SERIES_DATA[tipo];
-    if (!data) return;
-    document.getElementById('disp-serie').value  = data.serie;
-    document.getElementById('disp-numero').value = data.numero;
+    var d = SERIES[tipo];
+    if (!d) return;
+    document.getElementById('disp-serie').value  = d.serie;
+    document.getElementById('disp-numero').value = d.numero;
 }
 
-// Inicializar al cargar
+// ── BUSCADOR CLIENTES ──
+function buscarCliente(val) {
+    var drop = document.getElementById('cli-drop');
+    if (!val || val.length < 1) { drop.style.display='none'; return; }
+    var q = val.toLowerCase();
+    var matches = CLIENTES.filter(function(c) {
+        return c.nombre.toLowerCase().indexOf(q)>=0 || (c.dni&&c.dni.indexOf(q)>=0) || (c.ruc&&c.ruc.indexOf(q)>=0);
+    }).slice(0,8);
+    if (!matches.length) { drop.innerHTML='<div style="padding:12px 14px;font-size:12px;color:var(--text3)">Sin resultados</div>'; drop.style.display='block'; return; }
+    var html = '';
+    matches.forEach(function(c) {
+        html += '<div class="cli-opt" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)"'
+             + ' onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'">'
+             + '<div style="font-size:13px;font-weight:600">' + c.nombre + '</div>'
+             + (c.dni ? '<div style="font-size:11px;color:var(--text3)">DNI: ' + c.dni + '</div>' : '')
+             + (c.ruc ? '<div style="font-size:11px;color:var(--text3)">RUC: ' + c.ruc + '</div>' : '')
+             + '</div>';
+    });
+    drop.innerHTML = html;
+    drop.style.display = 'block';
+    drop.querySelectorAll('.cli-opt').forEach(function(el, i) {
+        el.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            seleccionarCliente(matches[i]);
+        });
+    });
+}
+
+function seleccionarCliente(c) {
+    _cliSel = c;
+    document.getElementById('cli-id').value   = c.id;
+    document.getElementById('cli-busq').value = c.nombre;
+    document.getElementById('cli-drop').style.display = 'none';
+    document.getElementById('cli-sel').style.display  = 'flex';
+    document.getElementById('cli-sel-nom').textContent = c.nombre + (c.dni?' · DNI '+c.dni:'') + (c.ruc?' · RUC '+c.ruc:'');
+    document.getElementById('cli-busq').style.display = 'none';
+    // Filtrar mascotas
+    document.getElementById('mas-busq').value = '';
+    document.getElementById('mas-id').value   = '';
+    limpiarMascota();
+}
+
+function limpiarCliente() {
+    _cliSel = null;
+    document.getElementById('cli-id').value   = '';
+    document.getElementById('cli-busq').value = '';
+    document.getElementById('cli-busq').style.display = '';
+    document.getElementById('cli-sel').style.display  = 'none';
+    limpiarMascota();
+}
+
+// ── BUSCADOR MASCOTAS ──
+function buscarMascota(val) {
+    var drop = document.getElementById('mas-drop');
+    var cliId = document.getElementById('cli-id').value;
+    var q = val.toLowerCase();
+    var matches = MASCOTAS.filter(function(m) {
+        var matchNom = m.label.toLowerCase().indexOf(q) >= 0;
+        var matchCli = !cliId || m.cliente_id == cliId;
+        return matchNom && matchCli;
+    }).slice(0,8);
+    if (!matches.length) { drop.style.display='none'; return; }
+    var html = '';
+    matches.forEach(function(m) {
+        html += '<div class="mas-opt" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)"'
+             + ' onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'">'
+             + '<div style="font-size:13px;font-weight:600">🐾 ' + m.label + '</div></div>';
+    });
+    drop.innerHTML = html;
+    drop.style.display = 'block';
+    drop.querySelectorAll('.mas-opt').forEach(function(el, i) {
+        el.addEventListener('mousedown', function(e) {
+            e.preventDefault();
+            seleccionarMascota(matches[i]);
+        });
+    });
+}
+
+function seleccionarMascota(m) {
+    document.getElementById('mas-id').value   = m.id;
+    document.getElementById('mas-busq').value = m.label;
+    document.getElementById('mas-drop').style.display = 'none';
+    document.getElementById('mas-sel').style.display  = 'flex';
+    document.getElementById('mas-sel-nom').textContent = m.label;
+    document.getElementById('mas-busq').style.display = 'none';
+}
+
+function limpiarMascota() {
+    document.getElementById('mas-id').value   = '';
+    document.getElementById('mas-busq').value = '';
+    document.getElementById('mas-busq').style.display = '';
+    document.getElementById('mas-sel').style.display  = 'none';
+}
+
+// Inicializar
 document.addEventListener('DOMContentLoaded', function() {
-    actualizarSerieNumero();
+    actualizarSerieNum();
 });
 
 function showHeader() {
-  var has = document.querySelector('#items-list tr');
-  document.getElementById('items-thead').style.display = has ? '' : 'none';
-  document.getElementById('items-empty').style.display = has ? 'none' : 'block';
+    var has = document.querySelector('#items-list tr');
+    document.getElementById('items-thead').style.display = has ? '' : 'none';
+    document.getElementById('items-empty').style.display = has ? 'none' : 'block';
 }
 
 function addItem(tipo) {

@@ -91,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $tipo_doc = $_POST['tipo_doc'] ?? 'factura';
         $nro_doc  = trim($_POST['nro_doc'] ?? '');
         $notas    = trim($_POST['notas'] ?? '');
-        $sede_id  = $user['sede_id'] ?? 1;
+        $sede_id  = getSede(); // sede activa del selector, no la del usuario
 
         // Calcular totales de los items
         $nombres    = $_POST['item_nombre']    ?? [];
@@ -236,7 +236,20 @@ try { $proveedores = $db->query("SELECT * FROM proveedores WHERE activo=1 ORDER 
 $categorias = [];
 try { $categorias = $db->query("SELECT * FROM categorias_producto ORDER BY nombre")->fetchAll(); } catch(Exception $e){}
 $productos_list = [];
-try { $productos_list = $db->query("SELECT id,nombre,presentacion,precio_costo,precio_venta,stock,lote,fecha_vencimiento,codigo_barras,laboratorio,categoria_id,stock_minimo FROM productos WHERE activo=1 ORDER BY nombre")->fetchAll(); } catch(Exception $e){}
+try {
+    $_cp_sw = verTodasSedes() ? "" : " AND sede_id=".getSede();
+    // Farmacia/inventario
+    $prods_farm = $db->query("SELECT id, nombre, presentacion, precio_costo, precio_venta, stock, lote, fecha_vencimiento, codigo_barras, laboratorio, categoria_id, stock_minimo, 'farmacia' as origen FROM productos WHERE activo=1$_cp_sw ORDER BY nombre")->fetchAll();
+    // Pet Shop
+    $prods_pet = [];
+    try {
+        $_cp_swp = verTodasSedes() ? "" : " AND sede_id=".getSede();
+        $prods_pet = $db->query("SELECT id, nombre, '' as presentacion, precio_costo, precio_venta, stock, '' as lote, NULL as fecha_vencimiento, COALESCE(codigo_barras,'') as codigo_barras, '' as laboratorio, NULL as categoria_id, stock_minimo, 'petshop' as origen FROM petshop_productos WHERE activo=1$_cp_swp ORDER BY nombre")->fetchAll();
+    } catch(Exception $e){}
+    // Combinar y ordenar por nombre
+    $productos_list = array_merge($prods_farm, $prods_pet);
+    usort($productos_list, fn($a,$b) => strcmp($a['nombre'], $b['nombre']));
+} catch(Exception $e){}
 
 // ── VER COMPRA ─────────────────────────────────────────────
 if ($action === 'ver' && isset($_GET['id'])) {
@@ -588,7 +601,7 @@ function buscarProducto(val) {
   _busqTimer = setTimeout(function() {
     var matches = _prods.filter(function(p) {
       return p.nombre.toLowerCase().indexOf(val.toLowerCase()) >= 0;
-    }).slice(0, 8);
+    }).slice(0, 10);
     if (!matches.length) {
       drop.innerHTML = '<div style="padding:12px 14px;font-size:12px;color:var(--text3)">Sin resultados — puedes agregarlo como producto nuevo</div>';
       drop.style.display = 'block';
@@ -596,10 +609,14 @@ function buscarProducto(val) {
     }
     var html = '';
     matches.forEach(function(p, i) {
+      var badge = p.origen === 'petshop'
+        ? '<span style="font-size:10px;padding:1px 7px;border-radius:999px;background:#ede9fe;color:#6d28d9;font-weight:700">🛒 Pet Shop</span>'
+        : '<span style="font-size:10px;padding:1px 7px;border-radius:999px;background:rgba(30,168,161,.12);color:var(--primary);font-weight:700">💊 Farmacia</span>';
       html += '<div class="prod-drop-item" data-idx="' + i + '" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)"'
         + ' onmouseover="this.style.background=\'var(--bg3)\'"'
         + ' onmouseout="this.style.background=\'\'">'
-        + '<div style="font-size:13px;font-weight:600">' + p.nombre + '</div>'
+        + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">'
+        + '<span style="font-size:13px;font-weight:600">' + p.nombre + '</span>' + badge + '</div>'
         + '<div style="font-size:11px;color:var(--text3)">Stock: <strong>' + p.stock + '</strong>'
         + (p.presentacion ? ' · ' + p.presentacion : '')
         + ' · Costo: S/' + parseFloat(p.precio_costo||0).toFixed(2)
@@ -609,10 +626,9 @@ function buscarProducto(val) {
     });
     drop.innerHTML = html;
     drop.style.display = 'block';
-    // Asignar eventos a cada ítem
     drop.querySelectorAll('.prod-drop-item').forEach(function(el, i) {
       el.addEventListener('mousedown', function(e) {
-        e.preventDefault(); // evitar que el onblur cierre el drop antes del click
+        e.preventDefault();
         addItem(matches[i]);
         document.getElementById('busq-prod').value = '';
         drop.style.display = 'none';

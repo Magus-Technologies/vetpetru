@@ -114,8 +114,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $db->prepare("UPDATE petshop_productos SET $sets WHERE id=:id")
                    ->execute(array_merge($data, ['id' => $pid]));
             } else {
-                $cols = implode(',', $fields);
-                $pls  = implode(',', array_map(fn($f)=>":$f", $fields));
+                // Agregar sede_id al INSERT
+                $data['sede_id'] = getSede();
+                $all_fields = array_merge($fields, ['sede_id']);
+                $cols = implode(',', $all_fields);
+                $pls  = implode(',', array_map(fn($f)=>":$f", $all_fields));
                 $db->prepare("INSERT INTO petshop_productos ($cols) VALUES ($pls)")->execute($data);
             }
             $msg = 'success'; $action = 'list';
@@ -159,7 +162,8 @@ $categorias = $db->query("SELECT DISTINCT categoria FROM petshop_productos WHERE
 // Stats — filtradas por sede
 $total_prods = $db->query("SELECT COUNT(*) FROM petshop_productos WHERE activo=1$_ps_sw")->fetchColumn();
 $stock_bajo  = $db->query("SELECT COUNT(*) FROM petshop_productos WHERE activo=1 AND stock<=stock_minimo$_ps_sw")->fetchColumn();
-$valor_total = $db->query("SELECT COALESCE(SUM(stock*precio_venta),0) FROM petshop_productos WHERE activo=1$_ps_sw")->fetchColumn();
+// Valor inventario = stock * precio_costo (valor real del inventario)
+$valor_total = $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM petshop_productos WHERE activo=1$_ps_sw")->fetchColumn();
 ?>
 
 <div class="page">

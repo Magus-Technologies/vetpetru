@@ -89,16 +89,15 @@ $estado_color=['programado'=>'var(--info)','en_proceso'=>'var(--warning)','compl
     <input type="hidden" name="action" value="save">
     <input type="hidden" name="id" value="<?= $editing['id']??'' ?>">
     <div class="form-row">
-      <div class="form-group"><label class="form-label required">Mascota</label>
-        <select class="form-input" name="mascota_id" required>
-          <option value="">— Seleccionar —</option>
-          <?php foreach($mascotas_sel as $m): ?><option value="<?= $m['id'] ?>" <?= ($editing['mascota_id']??'')==$m['id']?'selected':'' ?>><?= clean($m['label']) ?></option><?php endforeach; ?>
-        </select>
+      <div class="form-group" style="position:relative"><label class="form-label required">Mascota</label>
+        <input type="text" id="inp-mas-grm" class="form-input" placeholder="🐾 Buscar mascota..." autocomplete="off">
+        <input type="hidden" name="mascota_id" id="hid-mas-grm" value="" required>
+        <div id="drop-mas-grm" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:220px;overflow-y:auto"></div>
       </div>
-      <div class="form-group"><label class="form-label required">Groomer / Peluquero</label>
-        <select class="form-input" name="groomer_id" required>
-          <?php foreach($groomers as $g): ?><option value="<?= $g['id'] ?>" <?= ($editing['groomer_id']??$user['id'])==$g['id']?'selected':'' ?>><?= clean($g['nombre']) ?></option><?php endforeach; ?>
-        </select>
+      <div class="form-group" style="position:relative"><label class="form-label required">Groomer / Peluquero</label>
+        <input type="text" id="inp-grm-grm" class="form-input" placeholder="✂️ Buscar groomer..." autocomplete="off">
+        <input type="hidden" name="groomer_id" id="hid-grm-grm" value="" required>
+        <div id="drop-grm-grm" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:200px;overflow-y:auto"></div>
       </div>
     </div>
     <div class="form-row">
@@ -599,5 +598,17 @@ document.addEventListener('DOMContentLoaded',()=>{
   if (sel) sel.scrollIntoView({ block:'nearest', behavior:'smooth' });
 });
 document.querySelectorAll('input[name="tipo_servicio"]').forEach(r=>r.addEventListener('change',updateServUI));
+</script>
+<?php
+$_js_mas = array_map(fn($m)=>['id'=>$m['id'],'label'=>$m['label']], $mascotas_sel??[]);
+$_js_grm = array_map(fn($v)=>['id'=>$v['id'],'label'=>$v['nombre']], $groomers??[]);
+?>
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+    var _M=<?= json_encode(array_values($_js_mas)) ?>;
+    var _G=<?= json_encode(array_values($_js_grm)) ?>;
+    vetSearchSelect('inp-mas-grm','drop-mas-grm','hid-mas-grm',_M,'label');
+    vetSearchSelect('inp-grm-grm','drop-grm-grm','hid-grm-grm',_G,'label');
+});
 </script>
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

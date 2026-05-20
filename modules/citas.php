@@ -67,22 +67,42 @@ $estado_badge  = ['pendiente'=>'b-gray','confirmada'=>'b-blue','atendida'=>'b-te
 <?php if($msg==='success'): ?><div class="alert alert-success mb-2">✅ Cita guardada correctamente.</div><?php endif; ?>
 
 <?php if(in_array($action,['nueva','editar'])): ?>
+<?php
+// Preparar datos para buscadores
+$_mascotas_js = array_map(fn($m)=>['id'=>$m['id'],'label'=>$m['label']], $mascotas_sel);
+$_vets_js     = array_map(fn($v)=>['id'=>$v['id'],'label'=>$v['nombre'],'rol'=>$v['rol']??''], $vets_sel);
+$_editing_mas = $editing ? array_filter($mascotas_sel, fn($m)=>$m['id']==$editing['mascota_id']) : [];
+$_editing_mas = $_editing_mas ? reset($_editing_mas) : null;
+$_editing_vet = $editing ? array_filter($vets_sel, fn($v)=>$v['id']==$editing['veterinario_id']) : [];
+$_editing_vet = $_editing_vet ? reset($_editing_vet) : null;
+// Primer vet por defecto
+$_default_vet = $vets_sel[0] ?? null;
+?>
 <div class="card" style="max-width:680px">
   <div class="sec-header"><div class="sec-title"><?= $action==='editar'?'Editar':'Nueva'?> Cita</div><a href="?p=citas" class="btn btn-sm">← Volver</a></div>
   <form method="POST">
     <input type="hidden" name="action" value="save">
     <input type="hidden" name="id" value="<?= $editing['id']??'' ?>">
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Mascota *</label>
-        <select class="form-input" name="mascota_id" required>
-          <option value="">— Seleccionar —</option>
-          <?php foreach($mascotas_sel as $m): ?><option value="<?= $m['id'] ?>" <?= ($editing['mascota_id']??'')==$m['id']?'selected':'' ?>><?= clean($m['label']) ?></option><?php endforeach; ?>
-        </select>
+      <!-- Mascota buscador -->
+      <div class="form-group" style="position:relative">
+        <label class="form-label required">Mascota</label>
+        <input type="text" id="inp-mas-cita" class="form-input"
+               placeholder="🐾 Buscar mascota..."
+               value="<?= clean($_editing_mas['label']??'') ?>"
+               autocomplete="off">
+        <input type="hidden" name="mascota_id" id="hid-mas-cita" value="<?= $editing['mascota_id']??'' ?>" required>
+        <div id="drop-mas-cita" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:220px;overflow-y:auto"></div>
       </div>
-      <div class="form-group"><label class="form-label">Veterinario *</label>
-        <select class="form-input" name="veterinario_id" required>
-          <?php foreach($vets_sel as $v): ?><option value="<?= $v['id'] ?>" <?= ($editing['veterinario_id']??'')==$v['id']?'selected':'' ?>><?= clean($v['nombre']) ?></option><?php endforeach; ?>
-        </select>
+      <!-- Veterinario buscador -->
+      <div class="form-group" style="position:relative">
+        <label class="form-label required">Veterinario</label>
+        <input type="text" id="inp-vet-cita" class="form-input"
+               placeholder="👨‍⚕️ Buscar veterinario..."
+               value=""
+               autocomplete="off">
+        <input type="hidden" name="veterinario_id" id="hid-vet-cita" value="<?= $editing['veterinario_id'] ?? '' ?>" required>
+        <div id="drop-vet-cita" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:200px;overflow-y:auto"></div>
       </div>
     </div>
     <div class="form-row">
@@ -110,6 +130,14 @@ $estado_badge  = ['pendiente'=>'b-gray','confirmada'=>'b-blue','atendida'=>'b-te
     <div class="flex gap-1"><button type="submit" class="btn btn-primary">💾 Guardar cita</button><a href="?p=citas" class="btn">Cancelar</a></div>
   </form>
 </div>
+<script>
+var _MAS_CITA = <?= json_encode(array_values($_mascotas_js)) ?>;
+var _VET_CITA = <?= json_encode(array_values($_vets_js)) ?>;
+document.addEventListener('DOMContentLoaded', function() {
+    vetSearchSelect('inp-mas-cita','drop-mas-cita','hid-mas-cita', _MAS_CITA, 'label');
+    vetSearchSelect('inp-vet-cita','drop-vet-cita','hid-vet-cita', _VET_CITA, 'label');
+});
+</script>
 
 <?php else: ?>
 <div class="grid g4 mb-2">

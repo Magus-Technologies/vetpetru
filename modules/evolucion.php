@@ -77,19 +77,29 @@ $ei=['perro'=>'🐕','gato'=>'🐈','conejo'=>'🐰','ave'=>'🐦','reptil'=>'�
     <div><div class="sec-title">📝 Nueva Nota de Evolución</div></div>
     <a href="?p=evolucion<?= $mascota_id?"&mascota_id=$mascota_id":'' ?>" class="btn btn-ghost btn-sm">← Volver</a>
   </div>
+  <?php
+  $_ev_mas_js = array_map(fn($m)=>['id'=>$m['id'],'label'=>$m['label']], $mascotas_sel);
+  $_ev_vet_js = array_map(fn($v)=>['id'=>$v['id'],'label'=>$v['nombre']], $vets_sel);
+  $_ev_vet_def = array_filter($vets_sel, fn($v)=>$v['id']==$user['id']); $_ev_vet_def = $_ev_vet_def ? reset($_ev_vet_def) : ($vets_sel[0]??null);
+  ?>
   <form method="POST">
     <input type="hidden" name="action" value="save">
     <div class="form-row">
-      <div class="form-group"><label class="form-label required">Paciente</label>
-        <select class="form-input" name="mascota_id" required>
-          <option value="">— Seleccionar —</option>
-          <?php foreach($mascotas_sel as $m): ?><option value="<?= $m['id'] ?>" <?= $mascota_id==$m['id']?'selected':'' ?>><?= clean($m['label']) ?></option><?php endforeach; ?>
-        </select>
+      <div class="form-group" style="position:relative">
+        <label class="form-label required">Paciente</label>
+        <input type="text" id="inp-mas-ev" class="form-input" placeholder="🐾 Buscar mascota..."
+               value="<?= $mascota ? clean($mascota['nombre'].' ('.$mascota['dueno'].')') : '' ?>"
+               autocomplete="off">
+        <input type="hidden" name="mascota_id" id="hid-mas-ev" value="<?= $mascota_id ?>" required>
+        <div id="drop-mas-ev" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:220px;overflow-y:auto"></div>
       </div>
-      <div class="form-group"><label class="form-label required">Veterinario</label>
-        <select class="form-input" name="veterinario_id" required>
-          <?php foreach($vets_sel as $v): ?><option value="<?= $v['id'] ?>" <?= $v['id']==$user['id']?'selected':'' ?>><?= clean($v['nombre']) ?></option><?php endforeach; ?>
-        </select>
+      <div class="form-group" style="position:relative">
+        <label class="form-label required">Veterinario</label>
+        <input type="text" id="inp-vet-ev" class="form-input" placeholder="👨‍⚕️ Buscar veterinario..."
+               value=""
+               autocomplete="off">
+        <input type="hidden" name="veterinario_id" id="hid-vet-ev" value="" required>
+        <div id="drop-vet-ev" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:200px;overflow-y:auto"></div>
       </div>
     </div>
     <div class="form-row">
@@ -135,6 +145,14 @@ $ei=['perro'=>'🐕','gato'=>'🐈','conejo'=>'🐰','ave'=>'🐦','reptil'=>'�
     <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Guardar evolución</button><a href="?p=evolucion" class="btn btn-ghost">Cancelar</a></div>
   </form>
 </div>
+<script>
+var _EV_MAS = <?= json_encode(array_values($_ev_mas_js??[])) ?>;
+var _EV_VET = <?= json_encode(array_values($_ev_vet_js??[])) ?>;
+document.addEventListener('DOMContentLoaded', function() {
+    vetSearchSelect('inp-mas-ev','drop-mas-ev','hid-mas-ev', _EV_MAS, 'label');
+    vetSearchSelect('inp-vet-ev','drop-vet-ev','hid-vet-ev', _EV_VET, 'label');
+});
+</script>
 
 <?php else: ?>
 <div class="sec-header">

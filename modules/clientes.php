@@ -349,15 +349,187 @@ function showResultado(tipo, html) {
 
 <?php else: ?>
 <!-- ──────────── LISTA ──────────── -->
+
+<?php
+// ── EXPORTAR EXCEL ──
+if (($_GET['action']??'') === 'exportar_excel') {
+    $exp_sw = "activo=1";
+    try { $r=$db->query("SHOW COLUMNS FROM clientes LIKE 'sede_id'")->fetchAll(); if(!empty($r)&&!verTodasSedes()) $exp_sw.=" AND sede_id=".getSede(); } catch(Exception $e){}
+    $rows = $db->query("SELECT nombre,dni,ruc,telefono,email,direccion,como_conocio,notas FROM clientes WHERE $exp_sw ORDER BY nombre")->fetchAll();
+    $sede_nombre = '';
+    try { $sn=$db->prepare("SELECT nombre FROM sedes WHERE id=?"); $sn->execute([getSede()]); $sede_nombre=$sn->fetchColumn(); } catch(Exception $e){}
+
+    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="clientes_' . date('Y-m-d') . '.xls"');
+    header('Cache-Control: max-age=0');
+    echo "\xEF\xBB\xBF"; // BOM UTF-8
+    echo "EXPORTACIÓN DE CLIENTES - " . strtoupper($sede_nombre) . " - " . date('d/m/Y') . "\n\n";
+    echo "Nombre\tDNI\tRUC\tTeléfono\tEmail\tDirección\tCómo nos conoció\tNotas\n";
+    foreach ($rows as $row) {
+        echo implode("\t", array_map(fn($v)=>str_replace(["\t","\n","\r"],['','',''], $v??''), array_values($row))) . "\n";
+    }
+    exit;
+}
+
+// ── IMPORTAR EXCEL ──
+if (($_POST['action']??'') === 'importar_excel') {
+    $resultado = ['ok'=>0,'error'=>0,'errores'=>[]];
+    if (!empty($_FILES['archivo_excel']['tmp_name'])) {
+        $tmp = $_FILES['archivo_excel']['tmp_name'];
+        $ext = strtolower(pathinfo($_FILES['archivo_excel']['name'], PATHINFO_EXTENSION));
+        if (!in_array($ext, ['csv','xls','xlsx','txt'])) {
+            $msg = 'error:Formato no válido. Usa CSV o XLS.';
+        } else {
+            // Leer el archivo como texto (CSV/TSV)
+            $content = file_get_contents($tmp);
+            $content = mb_convert_encoding($content, 'UTF-8', 'UTF-8,ISO-8859-1,Windows-1252');
+            $content = ltrim($content, "\xEF\xBB\xBF"); // quitar BOM
+            $lines = preg_split('/\r\n|\r|\n/', trim($content));
+            $sede_id_imp = getSede();
+
+            // Detectar separador
+            $sep = "\t";
+            if (substr_count($lines[0]??'', ',') > substr_count($lines[0]??'', "\t")) $sep = ',';
+
+            $header_skipped = false;
+            foreach ($lines as $i => $line) {
+                if (!trim($line)) continue;
+                $cols = str_getcsv($line, $sep);
+                // Saltar encabezados (si contiene "nombre" o "dni" o empieza con texto)
+                if (!$header_skipped) {
+                    $header_skipped = true;
+                    if (strtolower(trim($cols[0]??'')) === 'nombre' || strtolower(trim($cols[0]??'')) === 'exportación') continue;
+                    if (!is_numeric(substr(trim($cols[1]??''),0,3)) && trim($cols[0]) && !is_numeric(trim($cols[0]))) {
+                        // Parece encabezado — saltarlo
+                        continue;
+                    }
+                }
+                $nombre = trim($cols[0]??'');
+                if (!$nombre || strlen($nombre) < 2) continue;
+
+                $dni    = trim($cols[1]??'');
+                $ruc    = trim($cols[2]??'');
+                $tel    = trim($cols[3]??'');
+                $email  = trim($cols[4]??'');
+                $dir    = trim($cols[5]??'');
+                $como   = trim($cols[6]??'');
+                $notas  = trim($cols[7]??'');
+
+                // Verificar duplicado por DNI o nombre+teléfono
+                $dup = false;
+                if ($dni) {
+                    $st=$db->prepare("SELECT id FROM clientes WHERE dni=? AND activo=1"); $st->execute([$dni]); if($st->fetch()) $dup=true;
+                }
+                if (!$dup && $nombre && $tel) {
+                    $st=$db->prepare("SELECT id FROM clientes WHERE nombre=? AND telefono=? AND activo=1"); $st->execute([$nombre,$tel]); if($st->fetch()) $dup=true;
+                }
+
+                if ($dup) {
+                    $resultado['errores'][] = "Fila ".($i+1).": '$nombre' ya existe (duplicado).";
+                    $resultado['error']++;
+                    continue;
+                }
+
+                try {
+                    $db->prepare("INSERT INTO clientes (nombre,dni,ruc,telefono,email,direccion,como_conocio,notas,sede_id,activo) VALUES (?,?,?,?,?,?,?,?,?,1)")
+                       ->execute([$nombre,$dni?:null,$ruc?:null,$tel?:null,$email?:null,$dir?:null,$como?:null,$notas?:null,$sede_id_imp]);
+                    $resultado['ok']++;
+                } catch(Exception $e) {
+                    $resultado['errores'][] = "Fila ".($i+1).": Error al insertar '$nombre'.";
+                    $resultado['error']++;
+                }
+            }
+            $msg = "import_ok:{$resultado['ok']}:{$resultado['error']}:" . implode('|', array_slice($resultado['errores'],0,5));
+        }
+    } else {
+        $msg = 'error:No se recibió ningún archivo.';
+    }
+}
+
+// ── DESCARGAR PLANTILLA ──
+if (($_GET['action']??'') === 'plantilla_excel') {
+    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="plantilla_clientes.xls"');
+    echo "\xEF\xBB\xBF";
+    echo "Nombre\tDNI\tRUC\tTeléfono\tEmail\tDirección\tCómo nos conoció\tNotas\n";
+    echo "Juan Pérez García\t12345678\t\t999123456\tjuan@email.com\tAv. Lima 123\tInternet\t\n";
+    echo "María López\t87654321\t\t987654321\t\tCalle Arequipa 45\tReferido\t\n";
+    exit;
+}
+?>
+
+<?php
+// Mostrar resultado de importación
+if (!empty($msg) && str_starts_with($msg,'import_ok:')) {
+    $parts = explode(':', $msg, 4);
+    $ok_n = $parts[1]??0; $err_n = $parts[2]??0; $errs = $parts[3]??'';
+?>
+<div class="alert alert-success mb-3">
+    ✅ Importación completada: <strong><?= $ok_n ?> clientes importados</strong>
+    <?= $err_n>0 ? ", <strong style='color:var(--danger)'>$err_n con errores</strong>" : '' ?>.
+    <?php if($errs): ?><div style="font-size:12px;margin-top:6px;color:var(--danger)"><?= clean(str_replace('|','<br>',$errs)) ?></div><?php endif; ?>
+</div>
+<?php } ?>
+
 <div class="sec-header">
   <div><div class="sec-title">Clientes registrados</div><div class="sec-sub"><?= $total ?> clientes en total</div></div>
-  <div class="flex gap-1">
+  <div class="flex gap-2" style="flex-wrap:wrap">
     <form class="flex gap-1" method="GET">
       <input type="hidden" name="p" value="clientes">
-      <input class="form-input" name="q" value="<?= clean($search) ?>" placeholder="Nombre, DNI, RUC, teléfono..." style="width:240px">
+      <input class="form-input" name="q" value="<?= clean($search) ?>" placeholder="Nombre, DNI, RUC, teléfono..." style="width:220px">
       <button type="submit" class="btn">Buscar</button>
     </form>
+    <!-- Exportar -->
+    <a href="?p=clientes&action=exportar_excel" class="btn btn-sm btn-ghost" style="color:var(--success);border-color:var(--success)" title="Exportar clientes a Excel">
+      📥 Exportar Excel
+    </a>
+    <!-- Importar -->
+    <button type="button" onclick="document.getElementById('modal-import').style.display='flex'" class="btn btn-sm btn-ghost" style="color:var(--accent);border-color:var(--accent)">
+      📤 Importar Excel
+    </button>
     <a href="?p=clientes&action=nuevo" class="btn btn-primary">+ Nuevo Cliente</a>
+  </div>
+</div>
+
+<!-- Modal importar -->
+<div id="modal-import" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:var(--bg2);border-radius:16px;padding:28px;width:520px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.2)">
+    <div style="font-size:16px;font-weight:700;margin-bottom:6px">📤 Importar Clientes desde Excel</div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:16px">
+      Los clientes se importarán a la sede activa: <strong style="color:var(--primary)"><?= clean((function() use ($db){ try{ $s=$db->prepare("SELECT nombre FROM sedes WHERE id=?"); $s->execute([getSede()]); return $s->fetchColumn(); }catch(Exception $e){return '';} })()) ?></strong>
+    </div>
+
+    <!-- Paso 1: Descargar plantilla -->
+    <div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:14px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px">📋 Paso 1 — Descarga la plantilla</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:10px">
+        Descarga la plantilla Excel, rellénala con tus clientes y súbela en el paso 2.
+        Columnas: <code>Nombre · DNI · RUC · Teléfono · Email · Dirección · Cómo nos conoció · Notas</code>
+      </div>
+      <a href="?p=clientes&action=plantilla_excel" class="btn btn-sm" style="color:var(--success);border-color:var(--success)">
+        ⬇️ Descargar plantilla
+      </a>
+    </div>
+
+    <!-- Paso 2: Subir archivo -->
+    <div style="background:var(--bg3);border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:6px">📂 Paso 2 — Sube el archivo completado</div>
+      <form method="POST" enctype="multipart/form-data" onsubmit="document.getElementById('modal-import').style.display='none'">
+        <input type="hidden" name="action" value="importar_excel">
+        <input type="hidden" name="p" value="clientes">
+        <div class="form-group">
+          <input type="file" name="archivo_excel" accept=".csv,.xls,.xlsx,.txt" class="form-input" style="cursor:pointer" required>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Formatos aceptados: CSV, XLS, XLSX</div>
+        </div>
+        <div style="font-size:11px;color:var(--text3);background:rgba(99,102,241,.08);padding:10px;border-radius:8px;margin-bottom:12px">
+          ⚠️ <strong>Notas:</strong> Los duplicados (mismo DNI o nombre+teléfono) serán ignorados. La primera fila de encabezado se salta automáticamente.
+        </div>
+        <div class="flex gap-2">
+          <button type="submit" class="btn btn-primary" style="flex:1">📤 Importar ahora</button>
+          <button type="button" onclick="document.getElementById('modal-import').style.display='none'" class="btn btn-ghost">Cancelar</button>
+        </div>
+      </form>
+    </div>
   </div>
 </div>
 

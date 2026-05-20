@@ -171,16 +171,15 @@ foreach($stats_tipos->fetchAll() as $r) $st_map[$r['tipo']]=$r['n'];
     <input type="hidden" name="action" value="save_examen">
     <input type="hidden" name="consulta_id" value="<?= $consulta_id ?>">
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Mascota / Paciente *</label>
-        <select class="form-input" name="mascota_id" required>
-          <option value="">— Seleccionar —</option>
-          <?php foreach($mascotas_sel as $m): ?><option value="<?= $m['id'] ?>" <?= $mascota_id==$m['id']?'selected':'' ?>><?= clean($m['label']) ?></option><?php endforeach; ?>
-        </select>
+      <div class="form-group" style="position:relative"><label class="form-label required">Mascota / Paciente</label>
+        <input type="text" id="inp-mas-ex" class="form-input" placeholder="🐾 Buscar mascota..." autocomplete="off">
+        <input type="hidden" name="mascota_id" id="hid-mas-ex" value="" required>
+        <div id="drop-mas-ex" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:220px;overflow-y:auto"></div>
       </div>
-      <div class="form-group"><label class="form-label">Veterinario responsable *</label>
-        <select class="form-input" name="veterinario_id" required>
-          <?php foreach($vets_sel as $v): ?><option value="<?= $v['id'] ?>" <?= $v['id']==$user['id']?'selected':'' ?>><?= clean($v['nombre']) ?></option><?php endforeach; ?>
-        </select>
+      <div class="form-group" style="position:relative"><label class="form-label required">Veterinario responsable</label>
+        <input type="text" id="inp-vet-ex" class="form-input" placeholder="👨‍⚕️ Buscar veterinario..." autocomplete="off">
+        <input type="hidden" name="veterinario_id" id="hid-vet-ex" value="" required>
+        <div id="drop-vet-ex" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);z-index:300;max-height:200px;overflow-y:auto"></div>
       </div>
     </div>
     <div class="form-row">
@@ -461,4 +460,16 @@ async function eliminarArchivo(id, btn) {
 }
 </script>
 
+<?php
+$_js_mas = array_map(fn($m)=>['id'=>$m['id'],'label'=>$m['label']], $mascotas_sel??[]);
+$_js_vet = array_map(fn($v)=>['id'=>$v['id'],'label'=>$v['nombre']], $vets_sel??[]);
+?>
+<script>
+document.addEventListener('DOMContentLoaded',function(){
+    var _M=<?= json_encode(array_values($_js_mas)) ?>;
+    var _V=<?= json_encode(array_values($_js_vet)) ?>;
+    vetSearchSelect('inp-mas-ex','drop-mas-ex','hid-mas-ex',_M,'label');
+    vetSearchSelect('inp-vet-ex','drop-vet-ex','hid-vet-ex',_V,'label');
+});
+</script>
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

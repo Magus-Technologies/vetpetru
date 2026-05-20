@@ -27,6 +27,68 @@ foreach ($_bnav as $_bn):
 
 <script>
 /* ── NOTIFICACIONES ── */
+/* ── HELPER: vetSearchSelect ── */
+function vetSearchSelect(inputId, dropId, hiddenId, data, labelKey, extraFn) {
+  var inp  = document.getElementById(inputId);
+  var drop = document.getElementById(dropId);
+  var hid  = document.getElementById(hiddenId);
+  if (!inp || !drop || !hid) return;
+
+  function renderDrop(matches) {
+    if (!matches.length) {
+      drop.innerHTML = '<div style="padding:10px 14px;font-size:12px;color:var(--text3)">Sin resultados</div>';
+      drop.style.display = 'block'; return;
+    }
+    var html = '';
+    matches.forEach(function(d, i) {
+      var lbl = d[labelKey] || d.nombre || d.label || '';
+      var sub = d.especie ? ' · <span style="color:var(--text3)">' + d.especie + '</span>'
+              : d.rol     ? ' · <span style="color:var(--text3)">' + d.rol + '</span>' : '';
+      html += '<div class="vss-opt" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border)"'
+            + ' onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'">'
+            + '<div style="font-size:13px;font-weight:600">' + lbl + sub + '</div></div>';
+    });
+    drop.innerHTML = html;
+    drop.style.display = 'block';
+    drop.querySelectorAll('.vss-opt').forEach(function(el, i) {
+      el.addEventListener('mousedown', function(e) {
+        e.preventDefault();
+        var d   = matches[i];
+        var lbl = d[labelKey] || d.nombre || d.label || '';
+        inp.value = lbl;
+        hid.value = d.id;
+        drop.style.display = 'none';
+        if (typeof extraFn === 'function') extraFn(d);
+      });
+    });
+  }
+
+  inp.addEventListener('input', function() {
+    hid.value = '';
+    var val = inp.value.toLowerCase().trim();
+    if (!val) { drop.style.display = 'none'; return; }
+    renderDrop(data.filter(function(d) {
+      return (d[labelKey] || d.nombre || d.label || '').toLowerCase().indexOf(val) >= 0;
+    }).slice(0, 10));
+  });
+
+  // Mostrar todos al hacer foco (para selección fácil)
+  inp.addEventListener('focus', function() {
+    var val = inp.value.toLowerCase().trim();
+    if (val) inp.dispatchEvent(new Event('input'));
+    else renderDrop(data.slice(0, 8));
+  });
+
+  inp.addEventListener('blur', function() {
+    setTimeout(function() { drop.style.display = 'none'; }, 200);
+  });
+
+  // Si se borra todo el texto, limpiar hidden
+  inp.addEventListener('keyup', function() {
+    if (!inp.value.trim()) hid.value = '';
+  });
+}
+
 var _notifOpen = false;
 var _notifApi  = '<?= BASE_URL ?>/api/notificaciones.php';
 var _notifInterval = null;

@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $id = (int)($_POST['id']??0);
         $fields = ['categoria_id','nombre','descripcion','presentacion','laboratorio','stock','stock_minimo','precio_costo','precio_venta','lote','fecha_vencimiento'];
         $data=[]; foreach($fields as $f) $data[$f] = trim($_POST[$f]??'') ?: null;
-        $data['sede_id'] = $user['sede_id']??1;
+        $data['sede_id'] = getSede(); // sede activa, no la del usuario
         if ($id) {
             $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
             $st = $db->prepare("UPDATE productos SET $sets WHERE id=:id"); $data['id']=$id;
