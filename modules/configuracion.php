@@ -99,6 +99,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             } else { $msg='❌ Formato no válido. Usa JPG, PNG o WebP.'; $msg_tipo='danger'; }
         }
     }
+
+    // ── Guardar config SUNAT ─────────────────────────────────────
+    if ($pa === 'save_sunat') {
+        $campos = ['sunat_usuario_sol','sunat_clave_sol','sunat_modo'];
+        try {
+            foreach ($campos as $k) {
+                $v = trim($_POST[$k] ?? '');
+                $db->prepare("INSERT INTO configuracion (clave,valor) VALUES (?,?) ON DUPLICATE KEY UPDATE valor=?")
+                   ->execute([$k, $v, $v]);
+            }
+            // Limpiar cache de sunat
+            unset($GLOBALS['__sunat_cfg_loaded'], $GLOBALS['__sunat_cfg_db']);
+            $msg = '✅ Configuración SUNAT guardada correctamente.';
+        } catch(Exception $e) { $msg='❌ Error: '.$e->Message(); $msg_tipo='danger'; }
+        $tab = 'sunat';
+    }
+
+    // ── Subir .pem al API Laravel ──────────────────────────────
+    if ($pa === 'subir_pem') {
+        $ruc = trim($_POST['sunat_ruc'] ?? '');
+        if (strlen($ruc) !== 11) {
+            $msg = '❌ Primero guarda un RUC válido (11 dígitos) antes de subir el certificado.';
+            $msg_tipo = 'danger';
+        } elseif (empty($_FILES['pem']['name']) || $_FILES['pem']['error'] !== UPLOAD_ERR_OK) {
+            $msg = '❌ Selecciona un archivo .pem válido.';
+            $msg_tipo = 'danger';
+        } else {
+            $tmp = $_FILES['pem']['tmp_name'];
+            $ext = strtolower(pathinfo($_FILES['pem']['name'], PATHINFO_EXTENSION));
+            if ($ext !== 'pem') {
+                $msg = '❌ Solo se acepta archivo .pem (convertido desde tu .pfx con OpenSSL).';
+                $msg_tipo = 'danger';
+            } elseif ($_FILES['pem']['size'] > 512 * 1024) {
+                $msg = '❌ El certificado no debe superar 512 KB.';
+                $msg_tipo = 'danger';
+            } else {
+                $apiUrl = $cfg['sunat_api_url'] ?? SUNAT_API_URL;
+                $endpoint = rtrim($apiUrl, '/').'/guardar/certificado/'.$ruc;
+                $cfile = curl_file_create($tmp, 'application/x-pem-file', $_FILES['pem']['name']);
+                $ch = curl_init($endpoint);
+                curl_setopt_array($ch, [
+                    CURLOPT_RETURNTRANSFER => true,
+                    CURLOPT_POST           => true,
+                    CURLOPT_POSTFIELDS     => ['certificado' => $cfile],
+                    CURLOPT_TIMEOUT        => 60,
+                    CURLOPT_HTTPHEADER     => ['Accept: application/json'],
+                    CURLOPT_SSL_VERIFYPEER => false,
+                ]);
+                $res  = curl_exec($ch);
+                $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                $err  = curl_error($ch);
+                curl_close($ch);
+
+                if ($res === false) {
+                    $msg = "❌ No se pudo conectar al API SUNAT ($endpoint): $err";
+                    $msg_tipo = 'danger';
+                } else {
+                    $j = json_decode($res, true);
+                    if (!is_array($j) || empty($j['estado'])) {
+                        $msg = "❌ El API rechazó el certificado: " . ($j['mensaje'] ?? "Respuesta HTTP $code: " . substr($res, 0, 200));
+                        $msg_tipo = 'danger';
+                    } else {
+                        $db->prepare("INSERT INTO configuracion (clave,valor) VALUES ('certificado_subido',?) ON DUPLICATE KEY UPDATE valor=?")
+                           ->execute(['1', '1']);
+                        $db->prepare("INSERT INTO configuracion (clave,valor) VALUES ('certificado_fecha',?) ON DUPLICATE KEY UPDATE valor=?")
+                           ->execute([date('Y-m-d H:i:s'), date('Y-m-d H:i:s')]);
+                        $msg = '✅ Certificado .pem subido correctamente al API SUNAT (RUC '.$ruc.').';
+                    }
+                }
+            }
+        }
+        $tab = 'sunat';
+    }
 }
 
 // ── Cargar configs ────────────────────────────────────────────
@@ -165,7 +238,8 @@ $logo_path = $cfg['logo_path'] ?? '';
 <!-- Tabs -->
 <div class="cfg-tab-nav">
   <a href="?p=configuracion&tab=clinica"  class="cfg-tab-btn <?= $tab==='clinica'?'active':'' ?>">🏥 Clínica</a>
-  <a href="?p=configuracion&tab=series"   class="cfg-tab-btn <?= $tab==='series'?'active':'' ?>">🧾 Series por Sede</a>
+  <a href="?p=configuracion&tab=series"  class="cfg-tab-btn <?= $tab==='series'?'active':'' ?>">🧾 Series por Sede</a>
+  <a href="?p=configuracion&tab=sunat"    class="cfg-tab-btn <?= $tab==='sunat'?'active':'' ?>">🏛️ SUNAT</a>
   <a href="?p=configuracion&tab=agenda"   class="cfg-tab-btn <?= $tab==='agenda'?'active':'' ?>">📅 Agenda</a>
   <a href="?p=configuracion&tab=notif"    class="cfg-tab-btn <?= $tab==='notif'?'active':'' ?>">📱 Notificaciones</a>
   <a href="?p=configuracion&tab=logo"     class="cfg-tab-btn <?= $tab==='logo'?'active':'' ?>">🖼️ Logo</a>
@@ -180,10 +254,15 @@ $logo_path = $cfg['logo_path'] ?? '';
     <div style="font-size:14px;font-weight:700;color:var(--text2);margin-bottom:14px">🏥 Datos de la clínica</div>
     <div class="form-group"><label class="form-label required">Nombre de la clínica</label><input type="text" name="clinica_nombre" class="form-input" value="<?= cfgV($cfg,'clinica_nombre') ?>" placeholder="VetPro Veterinaria"></div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">RUC</label><input type="text" name="clinica_ruc" class="form-input" value="<?= cfgV($cfg,'clinica_ruc') ?>" placeholder="20123456789" maxlength="11"></div>
+      <div class="form-group"><label class="form-label">RUC</label>
+        <div style="display:flex;gap:8px;align-items:center">
+          <input type="text" name="clinica_ruc" id="clinica_ruc" class="form-input" value="<?= cfgV($cfg,'clinica_ruc') ?>" placeholder="20123456789" maxlength="11" style="flex:1">
+          <button type="button" id="btnBuscRuc" class="btn btn-sm" style="background:var(--primary);color:white;white-space:nowrap">🔍 Buscar SUNAT</button>
+        </div>
+      </div>
       <div class="form-group"><label class="form-label">Teléfono</label><input type="text" name="clinica_telefono" class="form-input" value="<?= cfgV($cfg,'clinica_telefono') ?>"></div>
     </div>
-    <div class="form-group"><label class="form-label">Dirección</label><input type="text" name="clinica_direccion" class="form-input" value="<?= cfgV($cfg,'clinica_direccion') ?>"></div>
+    <div class="form-group"><label class="form-label">Dirección</label><input type="text" name="clinica_direccion" id="clinica_direccion" class="form-input" value="<?= cfgV($cfg,'clinica_direccion') ?>"></div>
     <div class="form-group"><label class="form-label">Email</label><input type="email" name="clinica_email" class="form-input" value="<?= cfgV($cfg,'clinica_email') ?>"></div>
     <div class="form-row">
       <div class="form-group"><label class="form-label">Director / Responsable</label><input type="text" name="director_nombre" class="form-input" value="<?= cfgV($cfg,'director_nombre') ?>"></div>
@@ -212,6 +291,47 @@ $logo_path = $cfg['logo_path'] ?? '';
 </div>
 <div style="margin-top:16px"><button type="submit" class="btn btn-primary btn-lg">💾 Guardar configuración</button></div>
 </form>
+
+<script>
+function showToast(msg, type) {
+  type = type || 'info';
+  var el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:20px;right:20px;z-index:9999;padding:12px 20px;border-radius:8px;font-size:14px;font-weight:600;max-width:350px;animation:slideIn .3s ease';
+  el.className = 'toast toast-' + type;
+  var colors = {'success':'#10b981,#d1fae5','error':'#ef4444,#fee2e2','info':'#3b82f6,#dbeafe'};
+  var c = colors[type] ? colors[type].split(',') : colors['info'].split(',');
+  el.style.background = c[1];
+  el.style.color = c[0];
+  el.style.border = '1px solid ' + c[0];
+  el.innerHTML = msg;
+  document.body.appendChild(el);
+  setTimeout(function(){ el.style.opacity='0'; el.style.transition='opacity .3s'; setTimeout(function(){ el.remove(); }, 300); }, 3000);
+}
+var style = document.createElement('style');
+style.textContent = '@keyframes slideIn{from{transform:translateX(100%);opacity:0}to{transform:translateX(0);opacity:1}}';
+document.head.appendChild(style);
+(function() {
+  var rucInp = document.getElementById('clinica_ruc');
+  var btn    = document.getElementById('btnBuscRuc');
+  if (!rucInp || !btn) return;
+  btn.addEventListener('click', async function() {
+    var doc = rucInp.value.trim();
+    if (doc.length !== 11) { showToast('El RUC debe tener 11 digitos.', 'error'); return; }
+    var orig = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = 'Consultando...';
+    try {
+      var r = await fetch('<?= BASE_URL ?>/api/proxy_documento.php?tipo=ruc&numero=' + doc);
+      var j = await r.json();
+      if (!j.ok) { showToast(j.error || 'No se encontro el RUC.', 'error'); return; }
+      document.querySelector('input[name=clinica_nombre]').value = j.nombre || '';
+      document.querySelector('input[name=clinica_direccion]').value = j.direccion || '';
+      showToast('Encontrado: ' + j.nombre, 'success');
+    } catch(e) { showToast('Error de red: ' + e.message, 'error'); }
+    finally { btn.disabled = false; btn.innerHTML = orig; }
+  });
+  rucInp.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); btn.click(); } });
+})();
+</script>
 
 <?php elseif($tab==='series'): ?>
 <!-- ═══ SERIES POR SEDE ═══ -->
@@ -308,23 +428,109 @@ $logo_path = $cfg['logo_path'] ?? '';
 <?php elseif($tab==='logo'): ?>
 <!-- ═══ LOGO ═══ -->
 <form method="POST" enctype="multipart/form-data">
-<input type="hidden" name="action" value="save_logo">
-<div class="card" style="max-width:500px">
-  <div style="font-size:14px;font-weight:700;color:var(--text2);margin-bottom:14px">🖼️ Logo de la clínica</div>
-  <?php if($logo_path): ?>
-  <div style="margin-bottom:16px;text-align:center">
-    <img src="<?= UPLOADS_URL.'/'.clean($logo_path) ?>" alt="Logo" style="max-height:120px;max-width:300px;object-fit:contain;border:1px solid var(--border);border-radius:8px;padding:8px;background:#fff">
-    <div style="font-size:11px;color:var(--text3);margin-top:6px">Logo actual</div>
+  <input type="hidden" name="action" value="save_logo">
+  <div class="card" style="max-width:500px">
+    <div style="font-size:14px;font-weight:700;color:var(--text2);margin-bottom:14px">🖼️ Logo de la clínica</div>
+    <?php if($logo_path): ?>
+    <div style="margin-bottom:16px;text-align:center">
+      <img src="<?= UPLOADS_URL.'/'.clean($logo_path) ?>" alt="Logo" style="max-height:120px;max-width:300px;object-fit:contain;border:1px solid var(--border);border-radius:8px;padding:8px;background:#fff">
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">Logo actual</div>
+    </div>
+    <?php endif; ?>
+    <div class="form-group">
+      <label class="form-label">Subir nuevo logo</label>
+      <input type="file" name="logo" accept="image/jpeg,image/png,image/webp" class="form-input" style="cursor:pointer">
+      <div style="font-size:11px;color:var(--text3);margin-top:4px">Formatos: JPG, PNG, WebP. Tamaño recomendado: 300×100px</div>
+    </div>
+    <button type="submit" class="btn btn-primary">📤 Subir logo</button>
   </div>
-  <?php endif; ?>
-  <div class="form-group">
-    <label class="form-label">Subir nuevo logo</label>
-    <input type="file" name="logo" accept="image/jpeg,image/png,image/webp" class="form-input" style="cursor:pointer">
-    <div style="font-size:11px;color:var(--text3);margin-top:4px">Formatos: JPG, PNG, WebP. Tamaño recomendado: 300×100px</div>
-  </div>
-  <button type="submit" class="btn btn-primary">📤 Subir logo</button>
-</div>
 </form>
+
+<?php elseif($tab==='sunat'): ?>
+<!-- ═══ SUNAT ═══ -->
+<?php
+require_once __DIR__ . '/../includes/config_sunat.php';
+$cert_subido = sunatCertSubido();
+$cert_fecha  = sunatCertFecha();
+?>
+
+<!-- Credenciales SOL -->
+<form method="POST" class="mb-3">
+  <input type="hidden" name="action" value="save_sunat">
+  <div class="card mb-3">
+    <div style="font-size:14px;font-weight:700;color:var(--text2);margin-bottom:14px">🔐 Credenciales SUNAT (SOL)</div>
+    <div class="grid g2" style="gap:14px;margin-bottom:14px">
+      <div class="form-group">
+        <label class="form-label">Usuario SOL</label>
+        <input type="text" name="sunat_usuario_sol" class="form-input"
+               value="<?= cfgV($cfg,'sunat_usuario_sol','MODDATOS') ?>"
+               placeholder="Ej: MODDATOS" maxlength="45">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Para BETA usa <code>MODDATOS</code></div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Clave SOL</label>
+        <input type="password" name="sunat_clave_sol" class="form-input"
+               value="<?= cfgV($cfg,'sunat_clave_sol','MODDATOS') ?>"
+               placeholder="••••••••" maxlength="45">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Para BETA usa <code>MODDATOS</code></div>
+      </div>
+    </div>
+    <div class="grid g2" style="gap:14px;margin-bottom:14px">
+      <div class="form-group">
+        <label class="form-label">Modo SUNAT</label>
+        <select name="sunat_modo" class="form-input">
+          <option value="beta"       <?= ($cfg['sunat_modo'] ?? 'beta')==='beta'?'selected':'' ?>>BETA (pruebas)</option>
+          <option value="produccion" <?= ($cfg['sunat_modo'] ?? '')==='produccion'?'selected':'' ?>>PRODUCCIÓN (real)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">📄 Certificado digital (.pem)</label>
+        <?php if($cert_subido): ?>
+          <div style="background:var(--green-l);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--success)">
+            ✅ Certificado cargado (<?= $cert_fecha ? date('d/m/Y', strtotime($cert_fecha)) : '—' ?>)
+          </div>
+          <button type="button" id="btnSelectPem" class="btn btn-sm" style="margin-top:6px;background:var(--primary);color:white">
+            🔄 Reemplazar
+          </button>
+        <?php else: ?>
+          <div style="background:var(--red-l);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:8px 12px;font-size:12px;color:var(--danger);margin-bottom:6px">
+            ❌ Sin certificado
+          </div>
+          <button type="button" id="btnSelectPem" class="btn btn-sm" style="background:var(--primary);color:white">
+            📤 Subir .pem
+          </button>
+        <?php endif; ?>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Envía directamente al API Laravel</div>
+      </div>
+    </div>
+    <button type="submit" class="btn btn-primary">💾 Guardar credenciales</button>
+  </div>
+</form>
+
+<!-- Form oculto para subir .pem al API Laravel -->
+<form method="POST" enctype="multipart/form-data" id="frmPem" style="display:none">
+  <input type="hidden" name="action" value="subir_pem">
+  <input type="hidden" name="sunat_ruc" value="<?= cfgV($cfg,'clinica_ruc') ?>">
+  <input type="file" name="pem" id="pemFile" accept=".pem">
+</form>
+
+<script>
+(function() {
+  var btnPem = document.getElementById('btnSelectPem');
+  var pemFile = document.getElementById('pemFile');
+  if (!btnPem || !pemFile) return;
+  btnPem.addEventListener('click', function() { pemFile.click(); });
+  pemFile.addEventListener('change', function() {
+    if (!pemFile.files[0]) return;
+    var f = pemFile.files[0];
+    if (!/\.pem$/i.test(f.name)) { alert('Solo archivos .pem'); pemFile.value = ''; return; }
+    if (f.size > 512 * 1024) { alert('El certificado no debe superar 512 KB.'); pemFile.value = ''; return; }
+    if (confirm('Subir certificado "' + f.name + '"?')) { document.getElementById('frmPem').submit(); }
+    else { pemFile.value = ''; }
+  });
+})();
+</script>
+
 <?php endif; ?>
 </div>
 

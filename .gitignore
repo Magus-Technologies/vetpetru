@@ -71,6 +71,11 @@ Desktop.ini
 .Spotlight-V100
 .Trashes
 
+# ---------- AI tooling ----------
+.codegraph/
+.cursor/
+.atl/
+
 # ---------- Otros ----------
 *.zip
 *.rar

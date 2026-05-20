@@ -73,6 +73,13 @@ $max_ing = max(array_values($dias_semana)?:[1]);
 // ── Ingresos por método de pago ──
 $ing_metodo = [];
 try { $ing_metodo = $db->query("SELECT v.metodo_pago, COALESCE(SUM(v.total),0) as total FROM ventas v WHERE MONTH(v.fecha)=MONTH(CURDATE()) AND v.estado='pagado'$sv GROUP BY v.metodo_pago ORDER BY total DESC LIMIT 3")->fetchAll(); } catch(Exception $e){}
+// ── Totales por método de pago (para el resumen) ──
+$efectivo=0; $tarjeta=0; $yape=0; $transf=0;
+$metodo_map = ['efectivo'=>'efectivo','tarjeta_debito'=>'tarjeta','tarjeta_credito'=>'tarjeta','yape'=>'yape','plin'=>'yape','transferencia'=>'transf'];
+foreach ($ing_metodo as $row) {
+    $key = $metodo_map[$row['metodo_pago']] ?? null;
+    if ($key) { $$key += (float)$row['total']; }
+}
 
 // ── Hospitalizados ──
 $hosp = [];
@@ -518,11 +525,6 @@ try {
     $map = [2=>'Lun',3=>'Mar',4=>'Mié',5=>'Jue',6=>'Vie',7=>'Sáb',1=>'Dom'];
     foreach($rows as $r) $citas_dow[$map[$r['dow']]??'?'] = (int)$r['n'];
 } catch(Exception $e) {}
-$efectivo=0;$tarjeta=0;$yape=0;$transf=0;
-try { $efectivo=(float)$db->query("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE v.metodo_pago='efectivo' AND MONTH(v.fecha)=MONTH(CURDATE()) AND v.estado='pagado'$sv")->fetchColumn(); }catch(Exception $e){}
-try { $tarjeta =(float)$db->query("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE v.metodo_pago IN ('tarjeta_debito','tarjeta_credito') AND MONTH(v.fecha)=MONTH(CURDATE()) AND v.estado='pagado'$sv")->fetchColumn(); }catch(Exception $e){}
-try { $yape    =(float)$db->query("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE v.metodo_pago IN ('yape','plin') AND MONTH(v.fecha)=MONTH(CURDATE()) AND v.estado='pagado'$sv")->fetchColumn(); }catch(Exception $e){}
-try { $transf  =(float)$db->query("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE v.metodo_pago='transferencia' AND MONTH(v.fecha)=MONTH(CURDATE()) AND v.estado='pagado'$sv")->fetchColumn(); }catch(Exception $e){}
 ?>
 
 <div style="margin-top:20px">

@@ -3,6 +3,9 @@
  * VetPro — Configuración SUNAT
  * ─────────────────────────────
  * Auto-detecta entorno (LOCAL vs PRODUCCIÓN) por hostname.
+ *
+ * Ahora lee de la BD (tabla `configuracion`) si existe.
+ * Si no existe, usa los valores por defecto hardcodeados (para local/testing).
  */
 
 $__host = $_SERVER['HTTP_HOST'] ?? gethostname();
@@ -18,32 +21,67 @@ if ($__isLocal) {
     define('SUNAT_API_URL', 'http://api-sunat-laravel.test/api/v1');
 } else {
     // ════════ PRODUCCIÓN ════════
-  define('SUNAT_API_URL', 'https://magus-qa.com/api-sunat-laravel/api/v1');
-
+    define('SUNAT_API_URL', 'https://magus-qa.com/api-sunat-laravel/api/v1');
 }
 
 define('SUNAT_API_TIMEOUT', 60);
 
-// ─── Endpoint SUNAT ───────────────────────────────────────────
-// 'beta' = pruebas | 'produccion' = ambiente real
-define('SUNAT_ENDPOINT', 'beta');
+// ─── Leer de BD si existe ──────────────────────────────────────
+function loadSunatConfigFromDB(?PDO $db = null): array {
+    if ($db === null) {
+        if (!isset($GLOBALS['__sunat_cfg_loaded'])) {
+            $GLOBALS['__sunat_cfg_loaded'] = true;
+            try {
+                $pdo = getDB();
+                $rows = $pdo->query("SELECT clave, valor FROM configuracion")->fetchAll(PDO::FETCH_KEY_PAIR);
+                $GLOBALS['__sunat_cfg_db'] = $rows;
+            } catch (Exception $e) {
+                $GLOBALS['__sunat_cfg_db'] = [];
+            }
+        }
+        return $GLOBALS['__sunat_cfg_db'] ?? [];
+    }
 
-// ─── Credenciales SOL (RUC de prueba SUNAT) ──────────────────
-// Para emitir con datos reales, cambia por el RUC del cliente,
-// su usuario y clave SOL.
-define('SUNAT_RUC',         '20000000001');
-define('SUNAT_USUARIO_SOL', 'MODDATOS');
-define('SUNAT_CLAVE_SOL',   'MODDATOS');
+    try {
+        $rows = $db->query("SELECT clave, valor FROM configuracion")->fetchAll(PDO::FETCH_KEY_PAIR);
+    } catch (Exception $e) {
+        $rows = [];
+    }
+    return $rows;
+}
 
-// ─── Datos de la empresa emisora ─────────────────────────────
-define('SUNAT_RAZON_SOCIAL',     'EMPRESA DE PRUEBAS S.A.C.');
-define('SUNAT_NOMBRE_COMERCIAL', 'VetPro');
-define('SUNAT_DIRECCION',        'AV. PRUEBA 123');
-define('SUNAT_UBIGEO',           '150101');
-define('SUNAT_DISTRITO',         'LIMA');
-define('SUNAT_PROVINCIA',        'LIMA');
-define('SUNAT_DEPARTAMENTO',     'LIMA');
+$__cfg = loadSunatConfigFromDB();
 
-// ─── Series ──────────────────────────────────────────────────
-define('SUNAT_SERIE_FACTURA', 'F001');
-define('SUNAT_SERIE_BOLETA',  'B001');
+// ─── Modo: beta | produccion ──────────────────────────────────
+$__modo = $__cfg['sunat_modo'] ?? 'beta';
+define('SUNAT_ENDPOINT', $__modo);
+
+// ─── Credenciales SOL ───────────────────────────────────────────
+define('SUNAT_RUC',         $__cfg['clinica_ruc'] ?? '20000000001');
+define('SUNAT_USUARIO_SOL', $__cfg['sunat_usuario_sol'] ?? 'MODDATOS');
+define('SUNAT_CLAVE_SOL',   $__cfg['sunat_clave_sol'] ?? 'MODDATOS');
+
+// ─── Datos empresa emisora (desde configuracion BD o defaults) ─
+define('SUNAT_RAZON_SIAL',     $__cfg['clinica_nombre'] ?? 'EMPRESA DE PRUEBAS S.A.C.');
+define('SUNAT_RAZON_SOCIAL',  $__cfg['clinica_nombre'] ?? 'EMPRESA DE PRUEBAS S.A.C.');
+define('SUNAT_NOMBRE_COMERCIAL', $__cfg['clinica_nombre'] ?? 'VetPro');
+define('SUNAT_DIRECCION',      $__cfg['clinica_direccion'] ?? 'AV. PRUEBA 123');
+define('SUNAT_UBIGEO',         $__cfg['ubigeo'] ?? '150101');
+define('SUNAT_DISTRITO',        $__cfg['distrito'] ?? 'LIMA');
+define('SUNAT_PROVINCIA',       $__cfg['provincia'] ?? 'LIMA');
+define('SUNAT_DEPARTAMENTO',    $__cfg['departamento'] ?? 'LIMA');
+
+// ─── Series por defecto (sede 1) ───────────────────────────────
+define('SUNAT_SERIE_FACTURA', $__cfg['serie_factura'] ?: 'F001');
+define('SUNAT_SERIE_BOLETA',  $__cfg['serie_boleta'] ?: 'B001');
+
+// ─── helpers de estado del certificado ──────────────────────────
+function sunatCertSubido(): bool {
+    $c = loadSunatConfigFromDB();
+    return !empty($c['certificado_subido']);
+}
+
+function sunatCertFecha(): ?string {
+    $c = loadSunatConfigFromDB();
+    return $c['certificado_fecha'] ?? null;
+}
