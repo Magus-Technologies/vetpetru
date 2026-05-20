@@ -22,8 +22,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Caja activa
-$caja = $db->query("SELECT ca.*,u.nombre as cajero FROM cajas ca JOIN usuarios u ON u.id=ca.usuario_id WHERE ca.estado='abierta' ORDER BY ca.id DESC LIMIT 1")->fetch();
+// Caja activa — filtrada por sede
+$_sid = getSede(); $_all = verTodasSedes();
+$_caja_sw = $_all ? "" : " AND ca.sede_id=$_sid";
+$caja = $db->query("SELECT ca.*,u.nombre as cajero FROM cajas ca JOIN usuarios u ON u.id=ca.usuario_id WHERE ca.estado='abierta'$_caja_sw ORDER BY ca.id DESC LIMIT 1")->fetch();
 
 $movimientos = [];
 $ingresos = $egresos = 0;
@@ -42,7 +44,7 @@ if ($caja) {
 }
 
 // Historial de cajas
-$historial_cajas = $db->query("SELECT ca.*,u.nombre as cajero, (SELECT COALESCE(SUM(monto),0) FROM movimientos_caja WHERE caja_id=ca.id AND tipo='ingreso') as total_ingresos, (SELECT COALESCE(SUM(monto),0) FROM movimientos_caja WHERE caja_id=ca.id AND tipo='egreso') as total_egresos FROM cajas ca JOIN usuarios u ON u.id=ca.usuario_id ORDER BY ca.id DESC LIMIT 15")->fetchAll();
+$historial_cajas = $db->query("SELECT ca.*,u.nombre as cajero, (SELECT COALESCE(SUM(monto),0) FROM movimientos_caja WHERE caja_id=ca.id AND tipo='ingreso') as total_ingresos, (SELECT COALESCE(SUM(monto),0) FROM movimientos_caja WHERE caja_id=ca.id AND tipo='egreso') as total_egresos FROM cajas ca JOIN usuarios u ON u.id=ca.usuario_id WHERE 1=1$_caja_sw ORDER BY ca.id DESC LIMIT 15")->fetchAll();
 $max_ingreso = max(array_column($historial_cajas,'total_ingresos') ?: [1]);
 
 $metodo_icons = ['efectivo'=>'💵','yape'=>'📱','plin'=>'📱','tarjeta_debito'=>'💳','tarjeta_credito'=>'💳','transferencia'=>'🏦'];

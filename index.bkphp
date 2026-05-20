@@ -11,7 +11,7 @@ $allowed = [
   'farmacia','inventario',
   'facturacion','plantillas','caja','personal','reportes',
   'whatsapp','portal','buscar',
-  'ganado','permisos','calendario','sedes','compras','configuracion'
+  'ganado','permisos','calendario','sedes','compras'
 ];
 if (!in_array($p, $allowed)) $p = 'dashboard';
 

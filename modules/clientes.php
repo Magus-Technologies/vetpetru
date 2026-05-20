@@ -13,6 +13,32 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action'])) {
         $data = [];
         foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '');
         $id = (int)($_POST['id'] ?? 0);
+
+        // ── Validar duplicados ──
+        $nombre = $data['nombre'];
+        $dni    = $data['dni'];
+        $ruc    = $data['ruc'];
+        $tel    = $data['telefono'];
+
+        // Duplicado por DNI
+        if ($dni) {
+            $dup = $db->prepare("SELECT id,nombre FROM clientes WHERE dni=? AND activo=1 AND id!=?");
+            $dup->execute([$dni, $id]); $d = $dup->fetch();
+            if ($d) { $msg = 'dup:El DNI '.$dni.' ya está registrado para: "'.$d['nombre'].'"'; goto fin_save; }
+        }
+        // Duplicado por RUC
+        if ($ruc) {
+            $dup = $db->prepare("SELECT id,nombre FROM clientes WHERE ruc=? AND activo=1 AND id!=?");
+            $dup->execute([$ruc, $id]); $d = $dup->fetch();
+            if ($d) { $msg = 'dup:El RUC '.$ruc.' ya está registrado para: "'.$d['nombre'].'"'; goto fin_save; }
+        }
+        // Duplicado por nombre + teléfono
+        if ($nombre && $tel) {
+            $dup = $db->prepare("SELECT id FROM clientes WHERE nombre=? AND telefono=? AND activo=1 AND id!=?");
+            $dup->execute([$nombre, $tel, $id]); $d = $dup->fetch();
+            if ($d) { $msg = 'dup:Ya existe un cliente con ese nombre y teléfono.'; goto fin_save; }
+        }
+
         if ($id) {
             $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
             $st = $db->prepare("UPDATE clientes SET $sets WHERE id=:id");
@@ -21,11 +47,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action'])) {
             $cols = implode(',', $fields);
             $pls  = implode(',', array_map(fn($f)=>":$f", $fields));
             $st = $db->prepare("INSERT INTO clientes ($cols,sede_id) VALUES ($pls,:sede_id)");
-            $data['sede_id'] = $user['sede_id'] ?? 1;
+            $data['sede_id'] = getSede(); // usar sede activa, no la del usuario
         }
         $st->execute($data);
         $msg = 'success';
-        $action = 'list';
+        fin_save:
+        $action = ($msg === 'success') ? 'list' : 'nuevo';
     }
 }
 
@@ -48,6 +75,13 @@ if ($search) {
     $where .= " AND (nombre LIKE ? OR dni LIKE ? OR ruc LIKE ? OR telefono LIKE ? OR email LIKE ?)";
     $like = "%$search%"; $params = [$like,$like,$like,$like,$like];
 }
+// Filtro sede — sin alias (la query no hace JOIN en el WHERE)
+try {
+    $_r=$db->query("SHOW COLUMNS FROM `clientes` LIKE 'sede_id'")->fetchAll();
+    if(!empty($_r)) {
+        if(!verTodasSedes()) { $where .=" AND sede_id=".getSede(); }
+    }
+} catch(Exception $e) {}
 $total_rows = $db->prepare("SELECT COUNT(*) FROM clientes WHERE $where");
 $total_rows->execute($params); $total = $total_rows->fetchColumn();
 $st = $db->prepare("SELECT c.*, (SELECT COUNT(*) FROM mascotas WHERE cliente_id=c.id AND estado='activo') as n_mascotas FROM clientes c WHERE $where ORDER BY c.created_at DESC LIMIT $per OFFSET $offset");
@@ -59,6 +93,8 @@ $api_url = BASE_URL . '/api/consulta_documento.php';
 
 <?php if($msg==='success'): ?>
 <div class="alert alert-success alert-dismiss mb-2">✅ Cliente guardado correctamente.</div>
+<?php elseif(substr($msg,0,4)==='dup:'): ?>
+<div class="alert alert-danger mb-2">⚠️ <?= clean(substr($msg,4)) ?></div>
 <?php endif; ?>
 
 <?php if(in_array($action,['nuevo','editar'])): ?>
@@ -73,6 +109,20 @@ $api_url = BASE_URL . '/api/consulta_documento.php';
 
   <!-- BUSCADOR DNI / RUC -->
   <?php if($action==='nuevo'): ?>
+  <?php
+    @include_once __DIR__ . '/../includes/config_tokens.php';
+    $token_ok = defined('TOKEN_APIS_NET_PE') && TOKEN_APIS_NET_PE !== '';
+  ?>
+  <?php if(!$token_ok): ?>
+  <div class="alert alert-warn mb-2" style="flex-direction:column;gap:6px">
+    <div class="flex items-center gap-2"><span>⚠️</span><strong>Token de API no configurado — búsqueda DNI/RUC puede fallar</strong></div>
+    <div style="font-size:12px;line-height:1.9">
+      1. Ve a <a href="https://apis.net.pe" target="_blank" style="color:var(--amber-d);font-weight:700">apis.net.pe</a> → Regístrate gratis (30 segundos)<br>
+      2. Copia tu token del panel<br>
+      3. Abre <code style="background:#fff3cd;padding:1px 5px;border-radius:4px;font-size:11px">vetpro/includes/config_tokens.php</code> y pega el token en <code>TOKEN_APIS_NET_PE</code>
+    </div>
+  </div>
+  <?php endif; ?>
   <div style="background:var(--teal-l);border:1.5px solid var(--teal);border-radius:12px;padding:16px 18px;margin-bottom:20px">
     <div class="flex items-center gap-2 mb-3">
       <span style="font-size:20px">🔍</span>
@@ -235,7 +285,11 @@ async function buscarDoc(tipo) {
 
     } else {
       icoEl.textContent = '❌';
-      showResultado('error', `❌ ${data.error}`);
+      let errMsg = `❌ ${data.error}`;
+      if (data.tip === 'token') {
+        errMsg += `<br><span style="font-size:11px">👉 Configura un token gratis en <a href="https://apis.net.pe" target="_blank" style="color:var(--red-d);font-weight:700">apis.net.pe</a> y agrégalo en <code>config_tokens.php</code></span>`;
+      }
+      showResultado('error', errMsg);
     }
   } catch(e) {
     icoEl.textContent = '⚠️';

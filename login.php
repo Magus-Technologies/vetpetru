@@ -13,6 +13,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $u = $st->fetch();
         if ($u && password_verify($pass, $u['password'])) {
             $_SESSION['user'] = $u;
+            $_SESSION['sede_id'] = $u['sede_id'] ?? 1;
+            // Cargar sedes asignadas al usuario
+            try {
+                $us = $db->prepare("SELECT sede_id FROM usuario_sedes WHERE usuario_id=?");
+                $us->execute([$u['id']]);
+                $sedes_asignadas = array_column($us->fetchAll(), 'sede_id');
+                if (!empty($sedes_asignadas)) {
+                    $_SESSION['sedes_asignadas'] = $sedes_asignadas;
+                } else {
+                    $_SESSION['sedes_asignadas'] = [$u['sede_id'] ?? 1];
+                }
+            } catch(Exception $e) {
+                $_SESSION['sedes_asignadas'] = [$u['sede_id'] ?? 1];
+            }
+            // Admin ve todas por defecto
+            if ($u['rol'] === 'admin') $_SESSION['ver_todas_sedes'] = true;
+
+            // Migración única: asignar sede_id=1 SOLO a registros que NO tienen sede aún
+            // Esto no sobreescribe registros que ya tienen una sede asignada
+            if (!isset($_SESSION['migracion_sede_ok'])) {
+                $tablas_migrar = ['ventas','citas','clientes','mascotas','consultas','productos','compras','petshop_productos'];
+                foreach ($tablas_migrar as $tbl) {
+                    try {
+                        $cols = $db->query("SHOW COLUMNS FROM `$tbl` LIKE 'sede_id'")->fetchAll();
+                        if (empty($cols)) {
+                            $db->exec("ALTER TABLE `$tbl` ADD COLUMN sede_id INT DEFAULT 1");
+                        }
+                        // Solo actualiza los que tienen NULL o 0, no toca los que ya tienen sede
+                        $db->exec("UPDATE `$tbl` SET sede_id=1 WHERE (sede_id IS NULL OR sede_id=0)");
+                    } catch(Exception $e) {}
+                }
+                $_SESSION['migracion_sede_ok'] = true;
+            }
+
             $db->prepare("UPDATE usuarios SET ultimo_login = NOW() WHERE id = ?")->execute([$u['id']]);
             header('Location: ' . BASE_URL . '/index.php');
             exit;

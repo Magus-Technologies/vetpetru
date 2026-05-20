@@ -28,6 +28,12 @@ $estado_f = $_GET['estado']??'';
 if ($estado_f==='vigente')    $where .= " AND v.proxima_dosis > DATE_ADD(CURDATE(),INTERVAL 7 DAY)";
 elseif($estado_f==='por_vencer') $where .= " AND v.proxima_dosis BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 7 DAY)";
 elseif($estado_f==='vencida')    $where .= " AND v.proxima_dosis < CURDATE()";
+try {
+    $_r=$db->query("SHOW COLUMNS FROM `mascotas` LIKE 'sede_id'")->fetchAll();
+    if(!empty($_r)) {
+        if(!verTodasSedes()) { $where.=" AND m.sede_id=".getSede(); }
+    }
+} catch(Exception $e) {}
 
 $st = $db->prepare("SELECT v.*,m.nombre as mascota,m.especie,u.nombre as veterinario,cl.nombre as dueno,cl.telefono FROM vacunas v JOIN mascotas m ON m.id=v.mascota_id JOIN usuarios u ON u.id=v.veterinario_id JOIN clientes cl ON cl.id=m.cliente_id WHERE $where ORDER BY v.proxima_dosis ASC");
 $st->execute($params); $vacunas = $st->fetchAll();

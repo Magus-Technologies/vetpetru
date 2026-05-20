@@ -11,7 +11,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $id = (int)($_POST['id'] ?? 0);
         $fields = ['mascota_id','veterinario_id','tipo','fecha','hora','duracion_minutos','estado','motivo','notas'];
         $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '');
-        $data['sede_id'] = $user['sede_id'] ?? 1;
+        $data['sede_id'] = getSede();
         if ($id) {
             $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
             $st = $db->prepare("UPDATE citas SET $sets WHERE id=:id"); $data['id'] = $id;
@@ -45,6 +45,12 @@ $where = "1=1"; $params = [];
 if ($fecha_filtro)  { $where .= " AND c.fecha=?";          $params[] = $fecha_filtro; }
 if ($vet_filtro)    { $where .= " AND c.veterinario_id=?";  $params[] = $vet_filtro; }
 if ($estado_filtro) { $where .= " AND c.estado=?";          $params[] = $estado_filtro; }
+try {
+    $_r=$db->query("SHOW COLUMNS FROM `citas` LIKE 'sede_id'")->fetchAll();
+    if(!empty($_r)) {
+        if(!verTodasSedes()) { $where .=" AND c.sede_id=".getSede(); }
+    }
+} catch(Exception $e) {}
 
 $st = $db->prepare("SELECT c.*,m.nombre as mascota,m.especie,u.nombre as veterinario,cl.nombre as dueno,cl.telefono FROM citas c JOIN mascotas m ON m.id=c.mascota_id JOIN usuarios u ON u.id=c.veterinario_id JOIN clientes cl ON cl.id=m.cliente_id WHERE $where ORDER BY c.hora ASC");
 $st->execute($params); $citas = $st->fetchAll();
@@ -80,7 +86,7 @@ $estado_badge  = ['pendiente'=>'b-gray','confirmada'=>'b-blue','atendida'=>'b-te
       </div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Fecha *</label><input class="form-input" type="date" name="fecha" value="<?= clean($editing['fecha']??date('Y-m-d')) ?>" required></div>
+      <div class="form-group"><label class="form-label">Fecha *</label><input class="form-input" type="date" name="fecha" value="<?= clean($editing['fecha'] ?? ($_GET['fecha'] ?? date('Y-m-d'))) ?>" required></div>
       <div class="form-group"><label class="form-label">Hora *</label><input class="form-input" type="time" name="hora" value="<?= clean(substr($editing['hora']??'09:00',0,5)) ?>" required></div>
     </div>
     <div class="form-row">

@@ -67,16 +67,14 @@ $nav = [
   ['icon'=>'🛒', 'label'=>'Pet Shop',         'page'=>'petshop',     'section'=>''],
   ['icon'=>'💊', 'label'=>'Farmacia',         'page'=>'farmacia',    'section'=>'INVENTARIO'],
   ['icon'=>'📦', 'label'=>'Inventario',       'page'=>'inventario',  'section'=>''],
-  ['icon'=>'🛒', 'label'=>'Compras',           'page'=>'compras',     'section'=>''],
   ['icon'=>'🧾', 'label'=>'Facturación',      'page'=>'facturacion', 'section'=>'GESTIÓN'],
   ['icon'=>'💰', 'label'=>'Caja',             'page'=>'caja',        'section'=>''],
   ['icon'=>'📊', 'label'=>'Reportes',         'page'=>'reportes',    'section'=>''],
   ['icon'=>'👤', 'label'=>'Personal',         'page'=>'personal',    'section'=>''],
   ['icon'=>'💬', 'label'=>'WhatsApp',         'page'=>'whatsapp',    'section'=>'COMUNICACIÓN'],
   ['icon'=>'🌐', 'label'=>'Portal Cliente',   'page'=>'portal',      'section'=>''],
-  ['icon'=>'🔐', 'label'=>'Roles y Permisos', 'page'=>'permisos',       'section'=>''],
-  ['icon'=>'🏢', 'label'=>'Multi-Sede',        'page'=>'sedes',          'section'=>''],
-  ['icon'=>'⚙️', 'label'=>'Configuración',     'page'=>'configuracion',  'section'=>''],
+  ['icon'=>'🔐', 'label'=>'Roles y Permisos', 'page'=>'permisos',    'section'=>''],
+  ['icon'=>'🏢', 'label'=>'Multi-Sede',        'page'=>'sedes',       'section'=>''],
 ];
 ?>
 <!DOCTYPE html>
@@ -261,48 +259,6 @@ $nav = [
       ☰
     </button>
     <div>
-      <?php
-      $sede_nombre_top = '';
-      try {
-        $sn = $db->prepare("SELECT nombre,color FROM sedes WHERE id=?");
-        $sn->execute([getSede()]);
-        $sn_row = $sn->fetch();
-        $sede_nombre_top = $sn_row['nombre'] ?? '';
-        $sede_color_top  = $sn_row['color'] ?? '#1ea8a1';
-      } catch(Exception $e){ $sede_color_top='#1ea8a1'; }
-      $es_admin = hasRole(['admin']);
-      $ver_todas = $es_admin && ($_SESSION['ver_todas_sedes'] ?? true);
-      $sedes_usuario = $_SESSION['sedes_asignadas'] ?? [];
-      $tiene_multi_sede = count($sedes_usuario) > 1;
-      ?>
-      <div style="display:flex;align-items:center;gap:6px">
-        <?php if($tiene_multi_sede || $es_admin): ?>
-        <!-- Selector de sede para usuarios con acceso a múltiples sedes -->
-        <form method="GET" action="<?= BASE_URL ?>/index.php" style="display:flex;gap:4px;align-items:center">
-          <input type="hidden" name="p" value="<?= $page ?>">
-          <input type="hidden" name="cambiar_sede_rapido" value="1">
-          <select name="sede_sel" onchange="this.form.submit()"
-            style="padding:4px 8px;border-radius:8px;font-size:11px;font-weight:700;border:1.5px solid <?= $sede_color_top ?>;background:<?= $sede_color_top ?>15;color:<?= $sede_color_top ?>;cursor:pointer;outline:none;max-width:160px">
-            <?php
-            $todas_sedes_list=[];
-            try { $todas_sedes_list=$db->query("SELECT id,nombre FROM sedes ORDER BY nombre")->fetchAll(); }catch(Exception $e){}
-            foreach($todas_sedes_list as $sl):
-              $visible = $es_admin || in_array($sl['id'],$sedes_usuario);
-              if(!$visible) continue;
-            ?>
-            <option value="<?= $sl['id'] ?>" <?= $sl['id']==getSede()?'selected':'' ?>>🏢 <?= clean($sl['nombre']) ?></option>
-            <?php endforeach; ?>
-            <?php if($es_admin): ?>
-            <option value="0" <?= $ver_todas?'selected':'' ?>>🌐 Todas las sedes</option>
-            <?php endif; ?>
-          </select>
-        </form>
-        <?php else: ?>
-        <div style="display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:8px;font-size:11px;font-weight:700;background:<?= $sede_color_top ?>15;color:<?= $sede_color_top ?>;border:1.5px solid <?= $sede_color_top ?>40">
-          🏢 <?= clean($sede_nombre_top) ?>
-        </div>
-        <?php endif; ?>
-      </div>
       <div class="topbar-title"><?= clean($pageTitle) ?></div>
     </div>
 

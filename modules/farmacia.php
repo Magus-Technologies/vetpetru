@@ -2,6 +2,12 @@
 $page = 'farmacia'; $pageTitle = 'Farmacia / Inventario';
 require_once __DIR__ . '/../includes/header.php';
 $db = getDB();
+$_sid = getSede(); $_all = verTodasSedes();
+try {
+    $r = $db->query("SHOW COLUMNS FROM productos LIKE 'sede_id'")->fetchAll();
+    $_prod_sede = !empty($r);
+    if (empty($r)) { $db->exec("ALTER TABLE productos ADD COLUMN sede_id INT DEFAULT 1"); $_prod_sede=true; }
+} catch(Exception $e) { $_prod_sede = false; }
 $action = $_GET['action'] ?? 'list';
 $msg = '';
 
@@ -57,12 +63,14 @@ if ($search) { $where .= " AND (nombre LIKE ? OR laboratorio LIKE ? OR lote LIKE
 if ($alerta_f==='critico')    $where .= " AND stock < stock_minimo/2";
 elseif($alerta_f==='bajo')    $where .= " AND stock <= stock_minimo";
 elseif($alerta_f==='por_vencer') $where .= " AND fecha_vencimiento BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 30 DAY)";
+// Filtro sede seguro
+if ($_prod_sede && !$_all) { $where .= " AND sede_id=$_sid"; }
+$_swf = ($_prod_sede && !$_all) ? " AND sede_id=$_sid" : "";
 
 $st = $db->prepare("SELECT * FROM productos WHERE $where ORDER BY nombre ASC"); $st->execute($params); $productos=$st->fetchAll();
-
-$criticos = $db->query("SELECT COUNT(*) FROM productos WHERE stock < stock_minimo/2 AND activo=1")->fetchColumn();
-$bajos    = $db->query("SELECT COUNT(*) FROM productos WHERE stock <= stock_minimo AND activo=1")->fetchColumn();
-$total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM productos WHERE activo=1")->fetchColumn();
+$criticos = $db->query("SELECT COUNT(*) FROM productos WHERE stock < stock_minimo/2 AND activo=1$_swf")->fetchColumn();
+$bajos    = $db->query("SELECT COUNT(*) FROM productos WHERE stock <= stock_minimo AND activo=1$_swf")->fetchColumn();
+$total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM productos WHERE activo=1$_swf")->fetchColumn();
 ?>
 <?php if($msg==='success'): ?><div class="alert alert-success mb-2">✅ Operación realizada correctamente.</div><?php endif; ?>
 

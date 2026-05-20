@@ -1,64 +1,145 @@
 <?php
 $page = 'personal'; $pageTitle = 'Personal';
 require_once __DIR__ . '/../includes/header.php';
-if(!hasRole(['admin'])) { echo '<div class="alert alert-warn">⚠️ Solo los administradores pueden gestionar el personal.</div>'; require_once __DIR__.'/../includes/footer.php'; exit; }
+if (!hasRole(['admin'])) {
+    echo '<div class="alert alert-warn">Solo administradores.</div>';
+    require_once __DIR__.'/../includes/footer.php'; exit;
+}
 $db = getDB();
+
+// Auto-crear tabla usuario_sedes para multi-sede
+try {
+    $db->exec("CREATE TABLE IF NOT EXISTS usuario_sedes (
+        usuario_id INT NOT NULL,
+        sede_id INT NOT NULL,
+        PRIMARY KEY (usuario_id, sede_id)
+    )");
+} catch(Exception $e){}
+
 $action = $_GET['action'] ?? 'list';
 $msg = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pa = $_POST['action'] ?? '';
+
     if ($pa === 'save') {
-        $id = (int)($_POST['id']??0);
+        $id  = (int)($_POST['id'] ?? 0);
+        $pw  = trim($_POST['password'] ?? '');
         $fields = ['nombre','email','rol','especialidad','telefono','turno'];
-        $data=[]; foreach($fields as $f) $data[$f]=trim($_POST[$f]??'');
-        $data['activo'] = isset($_POST['activo']) ? 1 : 0;
-        $data['sede_id'] = $user['sede_id']??1;
-        if ($id) {
-            $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
-            $sets .= ",activo=:activo";
-            $st = $db->prepare("UPDATE usuarios SET $sets WHERE id=:id"); $data['id']=$id;
-            if (!empty($_POST['password'])) { $data['password']=password_hash($_POST['password'],PASSWORD_BCRYPT); $sets.=",password=:password"; $st=$db->prepare("UPDATE usuarios SET $sets WHERE id=:id"); }
-        } else {
-            if (empty($_POST['password'])) { $msg='error_pass'; } else {
-                $data['password'] = password_hash($_POST['password'],PASSWORD_BCRYPT);
-                $cols = implode(',', array_merge($fields,['activo','sede_id','password']));
-                $pls  = implode(',', array_map(fn($f)=>":$f", array_merge($fields,['activo','sede_id','password'])));
-                $st = $db->prepare("INSERT INTO usuarios ($cols) VALUES ($pls)");
+        $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '');
+        $data['activo']  = isset($_POST['activo']) ? 1 : 0;
+        // Sede principal (primera sede o la seleccionada)
+        $sedes_sel = $_POST['sedes_ids'] ?? [];
+        if (empty($sedes_sel)) $sedes_sel = [$_POST['sede_id'] ?? $user['sede_id'] ?? 1];
+        $data['sede_id'] = (int)$sedes_sel[0];
+        try {
+            if ($id) {
+                if ($pw) {
+                    $data['password'] = password_hash($pw, PASSWORD_BCRYPT);
+                    $all  = array_merge($fields, ['activo','sede_id','password']);
+                } else {
+                    $all  = array_merge($fields, ['activo','sede_id']);
+                }
+                $sets = implode(',', array_map(fn($f)=>"$f=:$f", $all));
+                $data['id'] = $id;
+                $db->prepare("UPDATE usuarios SET $sets WHERE id=:id")->execute($data);
+            } else {
+                if (!$pw) { $msg = 'error_pass'; goto fin; }
+                $dup = $db->prepare("SELECT id FROM usuarios WHERE email=?");
+                $dup->execute([$data['email']]);
+                if ($dup->fetch()) { $msg = 'error_dup'; goto fin; }
+                $data['password'] = password_hash($pw, PASSWORD_BCRYPT);
+                $all = array_merge($fields, ['activo','sede_id','password']);
+                $cols = implode(',', $all);
+                $pls  = implode(',', array_map(fn($f)=>":$f", $all));
+                $db->prepare("INSERT INTO usuarios ($cols) VALUES ($pls)")->execute($data);
+                $id = (int)$db->lastInsertId();
             }
-        }
-        if ($msg !== 'error_pass') { $st->execute($data); $msg='success'; $action='list'; }
+            // Guardar sedes múltiples
+            $db->prepare("DELETE FROM usuario_sedes WHERE usuario_id=?")->execute([$id]);
+            foreach ($sedes_sel as $sid) {
+                $sid = (int)$sid;
+                if ($sid) $db->prepare("INSERT IGNORE INTO usuario_sedes (usuario_id,sede_id) VALUES (?,?)")->execute([$id,$sid]);
+            }
+            $msg = 'success'; $action = 'list';
+        } catch(Exception $e) { $msg = 'error:'.$e->getMessage(); }
+        fin:
     }
+
     if ($pa === 'toggle') {
-        $db->prepare("UPDATE usuarios SET activo=NOT activo WHERE id=?")->execute([(int)$_POST['id']]);
-        $msg='success'; $action='list';
+        try {
+            $db->prepare("UPDATE usuarios SET activo=NOT activo WHERE id=?")->execute([(int)$_POST['id']]);
+            $msg = 'success'; $action = 'list';
+        } catch(Exception $e) { $msg = 'error:'.$e->getMessage(); }
+    }
+
+    if ($pa === 'reset_pass') {
+        $id  = (int)($_POST['id'] ?? 0);
+        $pw  = trim($_POST['nueva_pass'] ?? '');
+        $pw2 = trim($_POST['nueva_pass2'] ?? '');
+        if (!$pw || strlen($pw) < 6) { $msg = 'error:Minimo 6 caracteres.'; }
+        elseif ($pw !== $pw2) { $msg = 'error:Las contrasenas no coinciden.'; }
+        else {
+            try {
+                $db->prepare("UPDATE usuarios SET password=? WHERE id=?")->execute([password_hash($pw,PASSWORD_BCRYPT),$id]);
+                $msg = 'pass_ok';
+            } catch(Exception $e) { $msg = 'error:'.$e->getMessage(); }
+        }
+        $action = 'list';
     }
 }
 
-$editing=null;
-if (in_array($action,['editar']) && isset($_GET['id'])) {
-    $st=$db->prepare("SELECT * FROM usuarios WHERE id=?"); $st->execute([(int)$_GET['id']]); $editing=$st->fetch();
+$editing = null;
+$editing_sedes = [];
+if ($action === 'editar' && isset($_GET['id'])) {
+    $st = $db->prepare("SELECT * FROM usuarios WHERE id=?");
+    $st->execute([(int)$_GET['id']]); $editing = $st->fetch();
+    if (!$editing) { $action = 'list'; }
+    else {
+        $es = $db->prepare("SELECT sede_id FROM usuario_sedes WHERE usuario_id=?");
+        $es->execute([$editing['id']]);
+        $editing_sedes = array_column($es->fetchAll(), 'sede_id');
+        if (empty($editing_sedes)) $editing_sedes = [$editing['sede_id']];
+    }
 }
 
-$personal = $db->query("SELECT u.*, s.nombre as sede_nombre FROM usuarios u LEFT JOIN sedes s ON s.id=u.sede_id ORDER BY u.rol, u.nombre")->fetchAll();
-$rol_badge = ['admin'=>'b-red','veterinario'=>'b-teal','asistente'=>'b-blue','recepcionista'=>'b-purple'];
-$rol_labels= ['admin'=>'Administrador','veterinario'=>'Veterinario','asistente'=>'Asistente','recepcionista'=>'Recepcionista'];
-?>
-<?php if($msg==='success'): ?><div class="alert alert-success mb-2">✅ Personal guardado correctamente.</div><?php endif; ?>
-<?php if($msg==='error_pass'): ?><div class="alert alert-warn mb-2">⚠️ Debes ingresar una contraseña para el nuevo usuario.</div><?php endif; ?>
+$sedes = [];
+try { $sedes = $db->query("SELECT id,nombre,color FROM sedes ORDER BY nombre")->fetchAll(); } catch(Exception $e){}
+$personal = [];
+try { $personal = $db->query("SELECT u.*, s.nombre as sede_nombre, s.color as sede_color FROM usuarios u LEFT JOIN sedes s ON s.id=u.sede_id ORDER BY u.rol,u.nombre")->fetchAll(); } catch(Exception $e){}
 
-<?php if(in_array($action,['nueva','editar'])): ?>
-<div class="card" style="max-width:680px">
-  <div class="sec-header"><div class="sec-title"><?= $action==='editar'?'Editar':'Nuevo'?> Personal</div><a href="?p=personal" class="btn btn-sm">← Volver</a></div>
+// Cargar sedes de cada usuario
+$usuario_sedes_map = [];
+try {
+    $rows = $db->query("SELECT usuario_id, sede_id FROM usuario_sedes")->fetchAll();
+    foreach($rows as $r) $usuario_sedes_map[$r['usuario_id']][] = $r['sede_id'];
+} catch(Exception $e){}
+
+$rol_badge  = ['admin'=>'b-danger','veterinario'=>'b-success','asistente'=>'b-info','recepcionista'=>'b-warning'];
+$rol_labels = ['admin'=>'Administrador','veterinario'=>'Veterinario','asistente'=>'Asistente','recepcionista'=>'Recepcionista'];
+?>
+<?php if($msg==='success'): ?><div class="alert alert-success mb-3">&#10003; Cambios guardados correctamente.</div>
+<?php elseif($msg==='pass_ok'): ?><div class="alert alert-success mb-3">&#10003; Contrasena actualizada.</div>
+<?php elseif($msg==='error_pass'): ?><div class="alert alert-danger mb-3">Ingresa una contrasena para el nuevo usuario.</div>
+<?php elseif($msg==='error_dup'): ?><div class="alert alert-danger mb-3">Ya existe un usuario con ese email.</div>
+<?php elseif(substr($msg,0,6)==='error:'): ?><div class="alert alert-danger mb-3"><?= clean(substr($msg,6)) ?></div>
+<?php endif; ?>
+
+<?php if (in_array($action, ['nueva','editar'])): ?>
+<div class="card" style="max-width:700px">
+  <div class="sec-header mb-3">
+    <div class="sec-title"><?= $action==='editar'?'Editar':'Nuevo'?> Personal</div>
+    <a href="?p=personal" class="btn btn-ghost btn-sm">Volver</a>
+  </div>
   <form method="POST">
     <input type="hidden" name="action" value="save">
     <input type="hidden" name="id" value="<?= $editing['id']??'' ?>">
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Nombre completo *</label><input class="form-input" name="nombre" value="<?= clean($editing['nombre']??'') ?>" required></div>
-      <div class="form-group"><label class="form-label">Email *</label><input class="form-input" type="email" name="email" value="<?= clean($editing['email']??'') ?>" required></div>
+      <div class="form-group"><label class="form-label required">Nombre completo</label><input class="form-input" name="nombre" value="<?= clean($editing['nombre']??'') ?>" required></div>
+      <div class="form-group"><label class="form-label required">Email</label><input class="form-input" type="email" name="email" value="<?= clean($editing['email']??'') ?>" required></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Rol *</label>
+      <div class="form-group"><label class="form-label required">Rol</label>
         <select class="form-input" name="rol" required>
           <?php foreach($rol_labels as $k=>$v): ?><option value="<?= $k ?>" <?= ($editing['rol']??'recepcionista')===$k?'selected':'' ?>><?= $v ?></option><?php endforeach; ?>
         </select>
@@ -66,50 +147,140 @@ $rol_labels= ['admin'=>'Administrador','veterinario'=>'Veterinario','asistente'=
       <div class="form-group"><label class="form-label">Especialidad</label><input class="form-input" name="especialidad" value="<?= clean($editing['especialidad']??'') ?>"></div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Teléfono</label><input class="form-input" name="telefono" value="<?= clean($editing['telefono']??'') ?>"></div>
+      <div class="form-group"><label class="form-label">Telefono</label><input class="form-input" name="telefono" value="<?= clean($editing['telefono']??'') ?>"></div>
       <div class="form-group"><label class="form-label">Turno</label><input class="form-input" name="turno" value="<?= clean($editing['turno']??'') ?>" placeholder="Ej: L-V 8:00-17:00"></div>
     </div>
-    <div class="form-row">
-      <div class="form-group"><label class="form-label">Contraseña <?= $editing?'(dejar en blanco para no cambiar)':'*' ?></label><input class="form-input" type="password" name="password" placeholder="••••••••"></div>
-      <div class="form-group" style="display:flex;align-items:flex-end;padding-bottom:14px"><label style="display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer"><input type="checkbox" name="activo" <?= ($editing['activo']??1)?'checked':'' ?>> Usuario activo</label></div>
+
+    <!-- SEDES ASIGNADAS -->
+    <div class="form-group">
+      <label class="form-label required">Sedes a las que tiene acceso</label>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;padding:12px;background:var(--bg3);border-radius:10px;border:1.5px solid var(--border)">
+        <?php foreach($sedes as $s):
+          $checked = in_array($s['id'], $editing_sedes) || ($action==='nueva' && $s['id']==(getSede()));
+        ?>
+        <label style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--bg2);border-radius:8px;border:1.5px solid <?= $checked?($s['color']??'var(--primary)'):'var(--border)' ?>;cursor:pointer;font-size:13px;font-weight:600;transition:all .15s" id="lbl-sede-<?= $s['id'] ?>">
+          <input type="checkbox" name="sedes_ids[]" value="<?= $s['id'] ?>" <?= $checked?'checked':'' ?>
+            onchange="toggleSedeLbl(this,<?= $s['id'] ?>,'<?= addslashes($s['color']??'var(--primary)') ?>')"
+            style="width:16px;height:16px;accent-color:<?= $s['color']??'#1ea8a1' ?>">
+          <span style="width:8px;height:8px;border-radius:50%;background:<?= $s['color']??'#1ea8a1' ?>;display:inline-block"></span>
+          <?= clean($s['nombre']) ?>
+        </label>
+        <?php endforeach; ?>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px">Selecciona una o mas sedes. La primera sede seleccionada sera la sede principal.</div>
     </div>
-    <div class="flex gap-1"><button type="submit" class="btn btn-primary">💾 Guardar</button><a href="?p=personal" class="btn">Cancelar</a></div>
+
+    <div class="form-group">
+      <label class="form-label"><?= $editing?'Nueva contrasena <span style="font-weight:400;color:var(--text3)">(vaciar para no cambiar)</span>':'Contrasena *' ?></label>
+      <input class="form-input" type="password" name="password" placeholder="..." <?= !$editing?'required':'' ?> autocomplete="new-password">
+    </div>
+    <div class="form-group">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:14px">
+        <input type="checkbox" name="activo" <?= ($editing['activo']??1)?'checked':'' ?> style="width:16px;height:16px">
+        <span>Usuario activo</span>
+      </label>
+    </div>
+    <div class="flex gap-2">
+      <button type="submit" class="btn btn-primary btn-lg">Guardar cambios</button>
+      <a href="?p=personal" class="btn btn-ghost">Cancelar</a>
+    </div>
   </form>
 </div>
+<script>
+function toggleSedeLbl(cb, id, color) {
+  var lbl = document.getElementById('lbl-sede-' + id);
+  lbl.style.borderColor = cb.checked ? color : 'var(--border)';
+}
+</script>
 
 <?php else: ?>
-<div class="sec-header">
-  <div><div class="sec-title">Equipo de trabajo</div><div class="sec-sub"><?= count($personal) ?> colaboradores</div></div>
-  <a href="?p=personal&action=nueva" class="btn btn-primary">+ Nuevo Personal</a>
+<div class="sec-header mb-3">
+  <div><div class="page-title">Personal</div><div class="page-desc"><?= count($personal) ?> usuarios registrados</div></div>
+  <a href="?p=personal&action=nueva" class="btn btn-primary">+ Nuevo usuario</a>
 </div>
-<div class="grid g2">
-  <?php foreach($personal as $p): ?>
-  <div class="card card-sm" style="opacity:<?= $p['activo']?'1':'0.6' ?>">
-    <div class="flex items-center gap-2 mb-2">
-      <div class="avatar" style="width:44px;height:44px;font-size:15px;background:<?= $p['rol']==='admin'?'var(--red)':($p['rol']==='veterinario'?'var(--teal)':'var(--blue)') ?>">
-        <?= strtoupper(substr($p['nombre'],0,1).substr(strstr($p['nombre'],' ') ?: ' ',1,1)) ?>
+
+<!-- Modal cambio de contrasena -->
+<div id="modal-pass" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:var(--bg2);border-radius:16px;padding:28px;width:420px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.2)">
+    <div style="font-size:16px;font-weight:700;margin-bottom:6px">Cambiar contrasena</div>
+    <div id="modal-pass-nombre" style="font-size:13px;color:var(--text3);margin-bottom:16px"></div>
+    <form method="POST">
+      <input type="hidden" name="action" value="reset_pass">
+      <input type="hidden" name="id" id="modal-pass-id" value="">
+      <div class="form-group"><label class="form-label required">Nueva contrasena</label><input class="form-input" type="password" name="nueva_pass" id="nueva-pass" placeholder="Minimo 6 caracteres" required autocomplete="new-password"></div>
+      <div class="form-group"><label class="form-label required">Confirmar contrasena</label><input class="form-input" type="password" name="nueva_pass2" placeholder="Repetir" required autocomplete="new-password"></div>
+      <div class="flex gap-2 mt-2">
+        <button type="submit" class="btn btn-primary" style="flex:1">Actualizar contrasena</button>
+        <button type="button" onclick="document.getElementById('modal-pass').style.display='none'" class="btn btn-ghost">Cancelar</button>
       </div>
-      <div class="flex-1">
-        <div class="font-bold"><?= clean($p['nombre']) ?></div>
-        <div class="text-xs text-muted"><?= clean($p['email']) ?></div>
-      </div>
-      <span class="badge <?= $rol_badge[$p['rol']]??'b-gray' ?>"><?= $rol_labels[$p['rol']]??$p['rol'] ?></span>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:10px">
-      <div><div class="text-xs text-muted">Especialidad</div><div class="text-sm font-med"><?= clean($p['especialidad']??'—') ?></div></div>
-      <div><div class="text-xs text-muted">Turno</div><div class="text-sm font-med"><?= clean($p['turno']??'—') ?></div></div>
-      <div><div class="text-xs text-muted">Teléfono</div><div class="text-sm"><?= clean($p['telefono']??'—') ?></div></div>
-      <div><div class="text-xs text-muted">Sede</div><div class="text-sm"><?= clean($p['sede_nombre']??'—') ?></div></div>
-    </div>
-    <?php if($p['ultimo_login']): ?><div class="text-xs text-muted mb-2">Último ingreso: <?= date('d/m/Y H:i',strtotime($p['ultimo_login'])) ?></div><?php endif; ?>
-    <div class="flex gap-1">
-      <a href="?p=personal&action=editar&id=<?= $p['id'] ?>" class="btn btn-xs flex-1" style="justify-content:center">✏️ Editar</a>
-      <?php if($p['id'] != $user['id']): ?>
-      <form method="POST" style="flex:1"><input type="hidden" name="action" value="toggle"><input type="hidden" name="id" value="<?= $p['id'] ?>"><button type="submit" class="btn btn-xs w-full" style="color:<?= $p['activo']?'var(--red)':'var(--green)' ?>"><?= $p['activo']?'🔒 Desactivar':'✅ Activar' ?></button></form>
-      <?php endif; ?>
-    </div>
+    </form>
   </div>
-  <?php endforeach; ?>
 </div>
+
+<div class="card" style="padding:0">
+  <table class="vtable">
+    <thead><tr><th>Usuario</th><th>Rol</th><th>Sedes con acceso</th><th>Turno</th><th>Estado</th><th>Acciones</th></tr></thead>
+    <tbody>
+    <?php foreach($personal as $p):
+      $badge = $rol_badge[$p['rol']] ?? 'b-info';
+      $label = $rol_labels[$p['rol']] ?? ucfirst($p['rol']);
+      $psedes = $usuario_sedes_map[$p['id']] ?? [$p['sede_id']];
+      // Obtener nombres de sedes
+      $sede_names = [];
+      foreach($sedes as $s) { if(in_array($s['id'], $psedes)) $sede_names[] = ['nombre'=>$s['nombre'],'color'=>$s['color']??'#1ea8a1']; }
+    ?>
+    <tr>
+      <td>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:38px;height:38px;border-radius:50%;background:var(--primary-l);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:var(--primary);flex-shrink:0"><?= strtoupper(substr($p['nombre'],0,1)) ?></div>
+          <div>
+            <div style="font-weight:600;color:var(--text)"><?= clean($p['nombre']) ?></div>
+            <div style="font-size:11px;color:var(--text3)"><?= clean($p['email']) ?></div>
+            <?php if($p['especialidad']): ?><div style="font-size:11px;color:var(--text3)"><?= clean($p['especialidad']) ?></div><?php endif; ?>
+          </div>
+        </div>
+      </td>
+      <td><span class="badge <?= $badge ?>"><?= $label ?></span></td>
+      <td>
+        <div style="display:flex;flex-wrap:wrap;gap:4px">
+          <?php if(empty($sede_names)): ?>
+          <span style="font-size:11px;color:var(--text3)">Sin sede</span>
+          <?php else: foreach($sede_names as $sn): ?>
+          <span style="padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;background:<?= $sn['color'] ?>22;color:<?= $sn['color'] ?>;border:1px solid <?= $sn['color'] ?>44"><?= clean($sn['nombre']) ?></span>
+          <?php endforeach; endif; ?>
+        </div>
+      </td>
+      <td class="text-muted"><?= clean($p['turno']??'') ?></td>
+      <td><?= $p['activo'] ? '<span class="badge b-success">Activo</span>' : '<span class="badge b-danger">Inactivo</span>' ?></td>
+      <td>
+        <div class="flex gap-1">
+          <a href="?p=personal&action=editar&id=<?= $p['id'] ?>" class="btn btn-xs btn-ghost">Editar</a>
+          <button onclick="abrirCambioPass(<?= $p['id'] ?>, '<?= addslashes(clean($p['nombre'])) ?>')" class="btn btn-xs btn-ghost" style="color:var(--accent)">Contrasena</button>
+          <?php if($p['id'] != $user['id']): ?>
+          <form method="POST" style="display:inline" onsubmit="return confirm('Cambiar estado de <?= addslashes(clean($p['nombre'])) ?>?')">
+            <input type="hidden" name="action" value="toggle">
+            <input type="hidden" name="id" value="<?= $p['id'] ?>">
+            <button type="submit" class="btn btn-xs btn-ghost" style="color:<?= $p['activo']?'var(--danger)':'var(--success)' ?>"><?= $p['activo']?'Desactivar':'Activar' ?></button>
+          </form>
+          <?php endif; ?>
+        </div>
+      </td>
+    </tr>
+    <?php endforeach; ?>
+    <?php if(empty($personal)): ?>
+    <tr><td colspan="6" style="text-align:center;padding:48px;color:var(--text3)">Sin usuarios. <a href="?p=personal&action=nueva" class="btn btn-primary btn-sm">Agregar</a></td></tr>
+    <?php endif; ?>
+    </tbody>
+  </table>
+</div>
+<script>
+function abrirCambioPass(id, nombre) {
+  document.getElementById('modal-pass-id').value = id;
+  document.getElementById('modal-pass-nombre').textContent = 'Usuario: ' + nombre;
+  document.getElementById('nueva-pass').value = '';
+  document.getElementById('modal-pass').style.display = 'flex';
+  setTimeout(function(){ document.getElementById('nueva-pass').focus(); }, 100);
+}
+</script>
 <?php endif; ?>
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

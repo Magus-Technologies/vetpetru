@@ -1,0 +1,978 @@
+<?php
+$page = 'ganado'; $pageTitle = 'Ganado Vacuno';
+require_once __DIR__ . '/../includes/header.php';
+$db = getDB();
+
+// ── Auto-install tablas ganado (safe para MariaDB 10.5, sin GENERATED ALWAYS) ──
+$tablas_ganado = [
+"CREATE TABLE IF NOT EXISTS gv_fundos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  codigo VARCHAR(30), nombre VARCHAR(200) NOT NULL,
+  cliente_id INT, departamento VARCHAR(80), provincia VARCHAR(80), distrito VARCHAR(80),
+  direccion TEXT, hectareas DECIMAL(10,2), responsable VARCHAR(150), telefono VARCHAR(30),
+  notas TEXT, activo TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_potreros (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  fundo_id INT NOT NULL, nombre VARCHAR(150) NOT NULL, codigo VARCHAR(30),
+  hectareas DECIMAL(8,2), tipo_pasto VARCHAR(100), capacidad_animales INT DEFAULT 0,
+  estado ENUM('activo','descanso','mantenimiento') DEFAULT 'activo',
+  notas TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_lotes (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  fundo_id INT NOT NULL, potrero_id INT, nombre VARCHAR(150) NOT NULL, codigo VARCHAR(30),
+  proposito ENUM('leche','carne','reproductor','mixto','cria') DEFAULT 'mixto',
+  notas TEXT, activo TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_toros (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  codigo VARCHAR(50), nombre VARCHAR(150) NOT NULL, raza VARCHAR(100),
+  fecha_nacimiento DATE, peso DECIMAL(7,2),
+  fertilidad ENUM('alta','media','baja','sin_evaluar') DEFAULT 'sin_evaluar',
+  calidad_semen VARCHAR(80), fundo_id INT, propietario VARCHAR(150), foto VARCHAR(500),
+  historial_genetico TEXT, enfermedades TEXT, activo TINYINT(1) DEFAULT 1, notas TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_animales (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  codigo_interno VARCHAR(50), numero_arete VARCHAR(50), rfid VARCHAR(100), nombre VARCHAR(100),
+  foto VARCHAR(500), sexo ENUM('macho','hembra') NOT NULL DEFAULT 'hembra',
+  raza VARCHAR(100), color VARCHAR(80), fecha_nacimiento DATE,
+  tipo ENUM('leche','carne','reproductor','mixto','cria') DEFAULT 'mixto',
+  estado ENUM('activo','vendido','muerto','dado_de_baja','cuarentena') DEFAULT 'activo',
+  estado_reproductivo ENUM('vacia','prenada','lactante','seca','toro','novillo','ternero') DEFAULT 'vacia',
+  fundo_id INT, potrero_id INT, lote_id INT,
+  peso_inicial DECIMAL(7,2), peso_actual DECIMAL(7,2),
+  madre_id INT NULL, padre_id INT NULL,
+  origen ENUM('nacimiento','compra') DEFAULT 'nacimiento',
+  fecha_ingreso DATE, propietario_id INT, produccion_estimada DECIMAL(6,2),
+  notas TEXT, activo TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_celos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  animal_id INT NOT NULL, fecha DATE NOT NULL, hora TIME,
+  metodo_deteccion ENUM('visual','parche','georritmo','chaleco_marcador','otro') DEFAULT 'visual',
+  inflamacion TINYINT(1) DEFAULT 0, comportamiento TEXT, temperatura DECIMAL(4,1),
+  observaciones TEXT, veterinario_id INT, programar_inseminacion TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_inseminaciones (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  animal_id INT NOT NULL, celo_id INT NULL, fecha DATE NOT NULL, hora TIME,
+  tecnico_id INT, toro_id INT, codigo_pajilla VARCHAR(80), raza_genetica VARCHAR(100),
+  procedencia_semen ENUM('nacional','importado','sexado') DEFAULT 'nacional',
+  observaciones TEXT, fecha_diagnostico_prenez DATE,
+  resultado ENUM('pendiente','prenada','vacia','repeticion') DEFAULT 'pendiente',
+  notas TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_banco_semen (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  codigo_pajilla VARCHAR(80) NOT NULL, toro_id INT, toro_nombre VARCHAR(150),
+  raza VARCHAR(100), procedencia ENUM('nacional','importado','sexado') DEFAULT 'nacional',
+  fecha_ingreso DATE, cantidad INT DEFAULT 0, cantidad_usada INT DEFAULT 0,
+  tanque VARCHAR(50), temperatura DECIMAL(5,2), ubicacion_fisica VARCHAR(100),
+  stock_minimo INT DEFAULT 5, fecha_vencimiento DATE, costo_unitario DECIMAL(10,2),
+  observaciones TEXT, activo TINYINT(1) DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_prenez (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  animal_id INT NOT NULL, inseminacion_id INT NULL,
+  fecha_diagnostico DATE NOT NULL, resultado ENUM('prenada','vacia','aborto') NOT NULL,
+  fecha_inseminacion DATE, veterinario_id INT,
+  metodo ENUM('tacto_rectal','ecografia','laboratorio') DEFAULT 'ecografia',
+  fecha_probable_parto DATE, observaciones TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_partos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  madre_id INT NOT NULL, prenez_id INT NULL, fecha_parto DATE NOT NULL, hora_parto TIME,
+  tipo ENUM('natural','cesarea','distocico','inducido') DEFAULT 'natural',
+  complicaciones TEXT, cria_sexo ENUM('macho','hembra'), cria_peso DECIMAL(5,2),
+  cria_estado ENUM('vivo','muerto','debil') DEFAULT 'vivo',
+  cria_arete VARCHAR(50), cria_registrada TINYINT(1) DEFAULT 0,
+  cria_animal_id INT NULL, veterinario_id INT, observaciones TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_leche (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  animal_id INT NOT NULL, lote_id INT NULL, fecha DATE NOT NULL,
+  turno ENUM('manana','tarde','noche') DEFAULT 'manana',
+  litros DECIMAL(6,2) NOT NULL, calidad ENUM('A','B','C','rechazo') DEFAULT 'A',
+  temperatura DECIMAL(4,1), observaciones TEXT, registrado_por INT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_pesos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  animal_id INT NOT NULL, fecha DATE NOT NULL, peso DECIMAL(7,2) NOT NULL,
+  peso_anterior DECIMAL(7,2), ganancia_diaria DECIMAL(5,2),
+  condicion_corporal DECIMAL(3,1), registrado_por INT, observaciones TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_alimentacion (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  lote_id INT NULL, animal_id INT NULL, fundo_id INT,
+  fecha DATE NOT NULL, tipo_alimento VARCHAR(150) NOT NULL,
+  cantidad DECIMAL(8,2), unidad VARCHAR(30) DEFAULT 'kg',
+  horario VARCHAR(50), responsable VARCHAR(150), costo DECIMAL(10,2),
+  observaciones TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_vacunaciones_ganado (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  campania VARCHAR(150), vacuna VARCHAR(150) NOT NULL, lote_vacuna VARCHAR(80),
+  fecha DATE NOT NULL, proxima_dosis DATE, veterinario_id INT, fundo_id INT,
+  lote_id INT NULL, observaciones TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+"CREATE TABLE IF NOT EXISTS gv_tratamientos (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  animal_id INT NOT NULL, fecha DATE NOT NULL, enfermedad VARCHAR(200),
+  diagnostico TEXT, tratamiento TEXT, medicamento VARCHAR(200), dosis VARCHAR(80),
+  duracion_dias INT, veterinario_id INT, costo DECIMAL(10,2),
+  estado ENUM('activo','finalizado','cronico') DEFAULT 'activo',
+  observaciones TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)",
+];
+foreach ($tablas_ganado as $sql) {
+    try { $db->exec($sql); } catch(Exception $e) { /* ignorar si ya existe */ }
+}
+
+$sub   = $_GET['sub']   ?? 'dashboard';
+$action= $_GET['action'] ?? 'list';
+$msg   = '';
+
+// ── POST handlers ──────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $pa = $_POST['action'] ?? '';
+
+    // Guardar animal
+    if ($pa === 'save_animal') {
+        $id = (int)($_POST['id'] ?? 0);
+        $fields = ['codigo_interno','numero_arete','rfid','nombre','sexo','raza','color',
+                   'fecha_nacimiento','tipo','estado','estado_reproductivo','fundo_id','potrero_id',
+                   'lote_id','peso_inicial','peso_actual','origen','fecha_ingreso',
+                   'produccion_estimada','notas'];
+        $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '') ?: null;
+        // Foto
+        $foto_nueva = null;
+        if (!empty($_FILES['foto']['tmp_name']) && $_FILES['foto']['error'] === 0) {
+            $dir = UPLOADS_PATH . '/ganado/';
+            if (!is_dir($dir)) mkdir($dir, 0755, true);
+            $ext = pathinfo($_FILES['foto']['name'], PATHINFO_EXTENSION);
+            $fname = 'animal_'.($id?:time()).'_'.uniqid().'.'.$ext;
+            if (move_uploaded_file($_FILES['foto']['tmp_name'], $dir.$fname))
+                $foto_nueva = 'ganado/'.$fname;
+        }
+        if ($id) {
+            $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
+            if ($foto_nueva) { $sets .= ',foto=:foto'; $data['foto'] = $foto_nueva; }
+            $db->prepare("UPDATE gv_animales SET $sets WHERE id=:id")->execute(array_merge($data,['id'=>$id]));
+        } else {
+            if ($foto_nueva) { $fields[] = 'foto'; $data['foto'] = $foto_nueva; }
+            $cols = implode(',', $fields); $pls = implode(',', array_map(fn($f)=>":$f", $fields));
+            $db->prepare("INSERT INTO gv_animales ($cols) VALUES ($pls)")->execute($data);
+        }
+        $msg = 'ok'; $action = 'list';
+    }
+
+    // Guardar celo
+    if ($pa === 'save_celo') {
+        $fields = ['animal_id','fecha','hora','metodo_deteccion','comportamiento','temperatura','observaciones','veterinario_id'];
+        $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '') ?: null;
+        $data['inflamacion'] = isset($_POST['inflamacion']) ? 1 : 0;
+        $data['programar_inseminacion'] = isset($_POST['programar_inseminacion']) ? 1 : 0;
+        $cols = implode(',', array_merge($fields,['inflamacion','programar_inseminacion']));
+        $pls  = implode(',', array_map(fn($f)=>":$f", array_merge($fields,['inflamacion','programar_inseminacion'])));
+        $db->prepare("INSERT INTO gv_celos ($cols) VALUES ($pls)")->execute($data);
+        $msg = 'ok'; $sub = 'reproduccion'; $action = 'list';
+    }
+
+    // Guardar inseminación
+    if ($pa === 'save_insem') {
+        $fields = ['animal_id','fecha','hora','tecnico_id','toro_id','codigo_pajilla',
+                   'raza_genetica','procedencia_semen','observaciones','fecha_diagnostico_prenez','notas'];
+        $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '') ?: null;
+        $cols = implode(',', $fields); $pls = implode(',', array_map(fn($f)=>":$f", $fields));
+        $db->prepare("INSERT INTO gv_inseminaciones ($cols) VALUES ($pls)")->execute($data);
+        // Actualizar stock pajilla
+        if ($data['codigo_pajilla']) {
+            $db->prepare("UPDATE gv_banco_semen SET cantidad_usada=cantidad_usada+1 WHERE codigo_pajilla=? AND activo=1")
+               ->execute([$data['codigo_pajilla']]);
+        }
+        $msg = 'ok'; $sub = 'reproduccion'; $action = 'list';
+    }
+
+    // Guardar diagnóstico preñez
+    if ($pa === 'save_prenez') {
+        $id_ins = (int)($_POST['inseminacion_id'] ?? 0);
+        $res    = $_POST['resultado'] ?? 'vacia';
+        $animal_id = (int)$_POST['animal_id'];
+        $fecha_ins = trim($_POST['fecha_inseminacion'] ?? '');
+        $fpp = null;
+        if ($res === 'prenada' && $fecha_ins) {
+            $fpp = date('Y-m-d', strtotime($fecha_ins . ' +283 days')); // gestación bovina ~283 días
+        }
+        $db->prepare("INSERT INTO gv_prenez (animal_id,inseminacion_id,fecha_diagnostico,resultado,fecha_inseminacion,veterinario_id,metodo,fecha_probable_parto,observaciones) VALUES (?,?,?,?,?,?,?,?,?)")
+           ->execute([$animal_id,$id_ins,$_POST['fecha_diagnostico'],$res,$fecha_ins,$_POST['veterinario_id']??null,$_POST['metodo']??'ecografia',$fpp,$_POST['observaciones']??'']);
+        if ($res === 'prenada') {
+            $db->prepare("UPDATE gv_animales SET estado_reproductivo='prenada' WHERE id=?")->execute([$animal_id]);
+        }
+        if ($id_ins) {
+            $db->prepare("UPDATE gv_inseminaciones SET resultado=? WHERE id=?")->execute([$res,$id_ins]);
+        }
+        $msg = 'ok'; $sub = 'reproduccion'; $action = 'list';
+    }
+
+    // Guardar parto
+    if ($pa === 'save_parto') {
+        $madre_id = (int)$_POST['madre_id'];
+        $fields   = ['madre_id','prenez_id','fecha_parto','hora_parto','tipo','cria_sexo',
+                     'cria_peso','cria_estado','cria_arete','veterinario_id'];
+        $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '') ?: null;
+        $data['complicaciones'] = trim($_POST['complicaciones'] ?? '') ?: null;
+        $data['observaciones']  = trim($_POST['observaciones']  ?? '') ?: null;
+        $cols = implode(',', array_merge($fields,['complicaciones','observaciones']));
+        $pls  = implode(',', array_map(fn($f)=>":$f", array_merge($fields,['complicaciones','observaciones'])));
+        $db->prepare("INSERT INTO gv_partos ($cols) VALUES ($pls)")->execute($data);
+        $db->prepare("UPDATE gv_animales SET estado_reproductivo='lactante' WHERE id=?")->execute([$madre_id]);
+        $msg = 'ok'; $sub = 'reproduccion'; $action = 'list';
+    }
+
+    // Guardar producción leche
+    if ($pa === 'save_leche') {
+        $db->prepare("INSERT INTO gv_leche (animal_id,lote_id,fecha,turno,litros,calidad,observaciones,registrado_por) VALUES (?,?,?,?,?,?,?,?)")
+           ->execute([(int)$_POST['animal_id'],$_POST['lote_id']??null,$_POST['fecha'],$_POST['turno'],$_POST['litros'],$_POST['calidad']??'A',$_POST['observaciones']??'',$user['id']]);
+        $msg = 'ok'; $sub = 'leche'; $action = 'list';
+    }
+
+    // Guardar peso
+    if ($pa === 'save_peso') {
+        $animal_id = (int)$_POST['animal_id'];
+        $peso_nuevo = (float)$_POST['peso'];
+        $st = $db->prepare("SELECT peso_actual FROM gv_animales WHERE id=?"); $st->execute([$animal_id]); $row = $st->fetch();
+        $peso_ant = $row['peso_actual'] ?? null;
+        // Ganancia diaria vs última pesada
+        $gan = null;
+        if ($peso_ant) {
+            $ult = $db->prepare("SELECT fecha FROM gv_pesos WHERE animal_id=? ORDER BY fecha DESC LIMIT 1"); $ult->execute([$animal_id]); $ult = $ult->fetch();
+            if ($ult) {
+                $dias = max(1, (int)round((strtotime($_POST['fecha'])-strtotime($ult['fecha']))/86400));
+                $gan  = round(($peso_nuevo - $peso_ant) / $dias, 3);
+            }
+        }
+        $db->prepare("INSERT INTO gv_pesos (animal_id,fecha,peso,peso_anterior,ganancia_diaria,condicion_corporal,observaciones,registrado_por) VALUES (?,?,?,?,?,?,?,?)")
+           ->execute([$animal_id,$_POST['fecha'],$peso_nuevo,$peso_ant,$gan,$_POST['condicion_corporal']??null,$_POST['observaciones']??'',$user['id']]);
+        $db->prepare("UPDATE gv_animales SET peso_actual=? WHERE id=?")->execute([$peso_nuevo,$animal_id]);
+        $msg = 'ok'; $sub = 'peso'; $action = 'list';
+    }
+
+    // Guardar fundo
+    if ($pa === 'save_fundo') {
+        $id = (int)($_POST['id'] ?? 0);
+        $fields = ['codigo','nombre','departamento','provincia','distrito','direccion','hectareas','responsable','telefono','notas'];
+        $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '') ?: null;
+        if ($id) {
+            $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
+            $db->prepare("UPDATE gv_fundos SET $sets WHERE id=:id")->execute(array_merge($data,['id'=>$id]));
+        } else {
+            $cols = implode(',', $fields); $pls = implode(',', array_map(fn($f)=>":$f", $fields));
+            $db->prepare("INSERT INTO gv_fundos ($cols) VALUES ($pls)")->execute($data);
+        }
+        $msg = 'ok'; $sub = 'fundos'; $action = 'list';
+    }
+
+    // Guardar banco semen
+    if ($pa === 'save_semen') {
+        $fields = ['codigo_pajilla','toro_nombre','raza','procedencia','fecha_ingreso','cantidad','tanque','temperatura','ubicacion_fisica','stock_minimo','fecha_vencimiento','costo_unitario','observaciones'];
+        $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '') ?: null;
+        $data['toro_id'] = (int)($_POST['toro_id'] ?? 0) ?: null;
+        $cols = implode(',', array_merge($fields,['toro_id']));
+        $pls  = implode(',', array_map(fn($f)=>":$f", array_merge($fields,['toro_id'])));
+        $db->prepare("INSERT INTO gv_banco_semen ($cols) VALUES ($pls)")->execute($data);
+        $msg = 'ok'; $sub = 'banco_semen'; $action = 'list';
+    }
+}
+
+// ── Datos generales ────────────────────────────────────────────
+$fundos   = $db->query("SELECT * FROM gv_fundos WHERE activo=1 ORDER BY nombre")->fetchAll();
+$lotes    = $db->query("SELECT l.*,f.nombre as fundo FROM gv_lotes l JOIN gv_fundos f ON f.id=l.fundo_id WHERE l.activo=1 ORDER BY l.nombre")->fetchAll();
+$animales = $db->query("SELECT a.*,f.nombre as fundo FROM gv_animales a LEFT JOIN gv_fundos f ON f.id=a.fundo_id WHERE a.activo=1 ORDER BY a.numero_arete")->fetchAll();
+$toros    = $db->query("SELECT * FROM gv_toros WHERE activo=1 ORDER BY nombre")->fetchAll();
+$vets     = $db->query("SELECT id,nombre FROM usuarios WHERE rol IN ('veterinario','admin') AND activo=1")->fetchAll();
+
+// Alertas ganado
+$alertas_ganado = [];
+try {
+    $par_prox = (int)$db->query("SELECT COUNT(*) FROM gv_prenez WHERE resultado='prenada' AND fecha_probable_parto BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 15 DAY)")->fetchColumn();
+    if ($par_prox > 0) $alertas_ganado[] = ['tipo'=>'warn','msg'=>"$par_prox parto".($par_prox>1?'s':'')." próximo".($par_prox>1?'s':''),'icon'=>'🐄'];
+    $ins_pend = (int)$db->query("SELECT COUNT(*) FROM gv_inseminaciones WHERE resultado='pendiente' AND fecha_diagnostico_prenez <= DATE_ADD(CURDATE(),INTERVAL 3 DAY)")->fetchColumn();
+    if ($ins_pend > 0) $alertas_ganado[] = ['tipo'=>'info','msg'=>"$ins_pend diagnóstico".($ins_pend>1?'s':'')." preñez pendiente",'icon'=>'🔬'];
+} catch(Exception $e) {}
+
+// ── Dashboard KPIs ─────────────────────────────────────────────
+$kpi_total  = count($animales);
+$kpi_prena  = count(array_filter($animales, fn($a)=>$a['estado_reproductivo']==='prenada'));
+$kpi_leche_hoy = 0;
+try { $kpi_leche_hoy = (float)$db->query("SELECT COALESCE(SUM(litros),0) FROM gv_leche WHERE fecha=CURDATE()")->fetchColumn(); } catch(Exception $e){}
+$kpi_partos_prox = 0;
+try { $kpi_partos_prox = (int)$db->query("SELECT COUNT(*) FROM gv_prenez WHERE resultado='prenada' AND fecha_probable_parto BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 30 DAY)")->fetchColumn(); } catch(Exception $e){}
+$kpi_enfermos = 0;
+try { $kpi_enfermos = (int)$db->query("SELECT COUNT(*) FROM gv_tratamientos WHERE estado='activo'")->fetchColumn(); } catch(Exception $e){}
+$kpi_insem_pend = 0;
+try { $kpi_insem_pend = (int)$db->query("SELECT COUNT(*) FROM gv_inseminaciones WHERE resultado='pendiente'")->fetchColumn(); } catch(Exception $e){}
+
+// Producción leche últimos 7 días
+$leche_semana = [];
+for ($i = 6; $i >= 0; $i--) {
+    $dia = date('Y-m-d', strtotime("-$i days"));
+    try { $lt = (float)$db->query("SELECT COALESCE(SUM(litros),0) FROM gv_leche WHERE fecha='$dia'")->fetchColumn(); } catch(Exception $e){$lt=0;}
+    $leche_semana[$dia] = $lt;
+}
+$max_leche = max(array_values($leche_semana) ?: [1]);
+
+$estado_animal_color = [
+    'activo'=>['b-success','✅'],'vendido'=>['b-gray','📦'],'muerto'=>['b-danger','💀'],
+    'dado_de_baja'=>['b-gray','📋'],'cuarentena'=>['b-warning','⚠️']
+];
+$estado_repro_color = [
+    'vacia'=>['#f59e0b','Vacía'],'prenada'=>['#10b981','Preñada'],'lactante'=>['#3b82f6','Lactante'],
+    'seca'=>['#94a3b8','Seca'],'toro'=>['#8b5cf6','Toro'],'novillo'=>['#6b7280','Novillo'],'ternero'=>['#f97316','Ternero']
+];
+?>
+
+<style>
+/* ── GANADO NAV ── */
+.gv-subnav{display:flex;gap:4px;margin-bottom:20px;border-bottom:2px solid var(--border);overflow-x:auto;padding-bottom:0}
+.gv-tab{padding:9px 16px;font-size:12px;font-weight:600;color:var(--text3);border:none;background:none;cursor:pointer;white-space:nowrap;border-bottom:2px solid transparent;transition:all .15s;font-family:var(--font);margin-bottom:-2px;text-decoration:none;display:inline-flex;align-items:center;gap:5px}
+.gv-tab:hover{color:var(--text2)}
+.gv-tab.active{color:#0f766e;border-bottom-color:#0f766e;font-weight:700}
+
+/* Tarjetas KPI ganado */
+.gv-kpi{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px}
+.gv-kpi-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center;transition:all .15s}
+.gv-kpi-card:hover{box-shadow:var(--shadow);transform:translateY(-1px)}
+.gv-kpi-icon{font-size:26px;margin-bottom:8px}
+.gv-kpi-val{font-size:24px;font-weight:800;color:var(--text);font-family:var(--font-display);line-height:1}
+.gv-kpi-lbl{font-size:11px;color:var(--text3);margin-top:4px}
+
+/* Timeline animal */
+.gv-timeline{display:flex;gap:0;overflow-x:auto;padding-bottom:8px;margin-bottom:20px}
+.gv-tl-step{display:flex;flex-direction:column;align-items:center;min-width:80px;position:relative}
+.gv-tl-step::after{content:'→';position:absolute;right:-10px;top:14px;color:var(--text4);font-size:14px}
+.gv-tl-step:last-child::after{display:none}
+.gv-tl-icon{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;border:2px solid var(--border);background:var(--bg2)}
+.gv-tl-icon.done{background:var(--primary-l);border-color:var(--primary)}
+.gv-tl-lbl{font-size:9px;color:var(--text3);margin-top:5px;text-align:center;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+
+/* Tarjeta animal */
+.gv-animal-card{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:all .15s;cursor:pointer}
+.gv-animal-card:hover{box-shadow:var(--shadow);transform:translateY(-2px);border-color:var(--primary)}
+.gv-animal-photo{width:100%;height:120px;object-fit:cover;background:linear-gradient(135deg,#f0fdf4,#dcfce7);display:flex;align-items:center;justify-content:center;font-size:52px}
+.gv-animal-photo img{width:100%;height:100%;object-fit:cover}
+
+/* Gráfico mini leche */
+.gv-chart{display:flex;align-items:flex-end;gap:5px;height:60px}
+.gv-bar{flex:1;border-radius:4px 4px 0 0;min-height:4px;transition:opacity .15s;position:relative}
+.gv-bar:hover{opacity:.8}
+
+/* Estado repro badge */
+.gv-repro{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:10px;font-weight:700;color:#fff}
+
+/* Form section */
+.gv-form-section{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px}
+.gv-form-section-title{font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+
+@media(max-width:900px){.gv-kpi{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:600px){.gv-kpi{grid-template-columns:repeat(2,1fr)}}
+</style>
+
+<div class="page">
+
+<?php if($msg==='ok'): ?>
+<div class="alert alert-success mb-2"><span class="alert-icon">✅</span>Guardado correctamente.</div>
+<?php endif; ?>
+
+<!-- Alertas ganado -->
+<?php foreach($alertas_ganado as $ag): ?>
+<div class="alert alert-<?= $ag['tipo'] ?> mb-2"><span class="alert-icon"><?= $ag['icon'] ?></span><?= clean($ag['msg']) ?></div>
+<?php endforeach; ?>
+
+<!-- SUB-NAV -->
+<div class="gv-subnav">
+  <?php
+  $tabs = [
+    'dashboard'   => ['🐄','Dashboard'],
+    'animales'    => ['🏷️','Animales'],
+    'reproduccion'=> ['🧬','Reproducción'],
+    'leche'       => ['🥛','Producción Leche'],
+    'peso'        => ['⚖️','Control Peso'],
+    'sanidad'     => ['💉','Sanidad'],
+    'fundos'      => ['🌿','Fundos'],
+    'banco_semen' => ['🧪','Banco Semen'],
+  ];
+  foreach ($tabs as $tk => [$ti, $tv]):
+  ?>
+  <a href="?p=ganado&sub=<?= $tk ?>"
+     class="gv-tab <?= $sub===$tk?'active':'' ?>">
+    <?= $ti ?> <?= $tv ?>
+  </a>
+  <?php endforeach; ?>
+</div>
+
+<!-- ══════════════════════════════════════════════
+     DASHBOARD
+══════════════════════════════════════════════ -->
+<?php if ($sub === 'dashboard'): ?>
+
+<div class="gv-kpi">
+  <div class="gv-kpi-card"><div class="gv-kpi-icon">🐄</div><div class="gv-kpi-val"><?= $kpi_total ?></div><div class="gv-kpi-lbl">Total animales</div></div>
+  <div class="gv-kpi-card" style="border-color:<?= $kpi_prena>0?'#10b981':'var(--border)' ?>"><div class="gv-kpi-icon">🤰</div><div class="gv-kpi-val" style="color:var(--success)"><?= $kpi_prena ?></div><div class="gv-kpi-lbl">Vacas preñadas</div></div>
+  <div class="gv-kpi-card"><div class="gv-kpi-icon">🥛</div><div class="gv-kpi-val"><?= number_format($kpi_leche_hoy,1) ?> L</div><div class="gv-kpi-lbl">Producción hoy</div></div>
+  <div class="gv-kpi-card" style="border-color:<?= $kpi_partos_prox>0?'#f59e0b':'var(--border)' ?>"><div class="gv-kpi-icon">🐃</div><div class="gv-kpi-val" style="color:var(--warning)"><?= $kpi_partos_prox ?></div><div class="gv-kpi-lbl">Partos próximos</div></div>
+  <div class="gv-kpi-card"><div class="gv-kpi-icon">🔬</div><div class="gv-kpi-val"><?= $kpi_insem_pend ?></div><div class="gv-kpi-lbl">Diagnósticos pend.</div></div>
+  <div class="gv-kpi-card" style="border-color:<?= $kpi_enfermos>0?'#ef4444':'var(--border)' ?>"><div class="gv-kpi-icon">🏥</div><div class="gv-kpi-val" style="color:<?= $kpi_enfermos>0?'var(--danger)':'var(--text)' ?>"><?= $kpi_enfermos ?></div><div class="gv-kpi-lbl">En tratamiento</div></div>
+</div>
+
+<div class="grid" style="grid-template-columns:2fr 1fr;gap:16px;margin-bottom:16px">
+  <!-- Producción leche 7 días -->
+  <div class="card">
+    <div class="sec-header">
+      <div class="sec-title">🥛 Producción de leche — últimos 7 días</div>
+      <a href="?p=ganado&sub=leche&action=nueva" class="btn btn-sm btn-primary">+ Registrar</a>
+    </div>
+    <div class="flex items-end gap-2" style="height:80px;margin-bottom:8px">
+      <?php foreach ($leche_semana as $dia => $lit):
+        $pct = $max_leche > 0 ? max(4, round($lit/$max_leche*76)) : 4;
+        $esHoy = $dia === date('Y-m-d');
+      ?>
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px">
+        <div style="font-size:9px;color:var(--text3)"><?= number_format($lit,0) ?>L</div>
+        <div style="height:<?= $pct ?>px;width:100%;background:<?= $esHoy?'var(--primary)':'rgba(30,168,161,.3)' ?>;border-radius:4px 4px 0 0"></div>
+        <div style="font-size:9px;color:var(--text3)"><?= date('d/m',strtotime($dia)) ?></div>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <div style="font-size:12px;color:var(--text3);text-align:center">Total 7 días: <strong><?= number_format(array_sum($leche_semana),1) ?> L</strong></div>
+  </div>
+  <!-- Últimos partos / Preñadas próximas -->
+  <div class="card" style="padding:0">
+    <div style="padding:14px 16px;border-bottom:1px solid var(--border)" class="flex justify-between items-center">
+      <div class="sec-title">🐃 Partos próximos (30d)</div>
+      <a href="?p=ganado&sub=reproduccion" class="btn btn-xs">Ver →</a>
+    </div>
+    <?php
+    try {
+        $prox_partos = $db->query("SELECT a.nombre,a.numero_arete,p.fecha_probable_parto FROM gv_prenez p JOIN gv_animales a ON a.id=p.animal_id WHERE p.resultado='prenada' AND p.fecha_probable_parto BETWEEN CURDATE() AND DATE_ADD(CURDATE(),INTERVAL 30 DAY) ORDER BY p.fecha_probable_parto ASC LIMIT 5")->fetchAll();
+    } catch(Exception $e) { $prox_partos = []; }
+    ?>
+    <?php foreach ($prox_partos as $pp):
+      $dias_p = (int)ceil((strtotime($pp['fecha_probable_parto'])-time())/86400);
+    ?>
+    <div style="padding:10px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+      <span style="font-size:18px">🐄</span>
+      <div style="flex:1"><div style="font-size:12px;font-weight:600"><?= clean($pp['nombre']??$pp['numero_arete']) ?></div><div style="font-size:10px;color:var(--text3)"><?= date('d/m/Y',strtotime($pp['fecha_probable_parto'])) ?></div></div>
+      <span class="badge <?= $dias_p<=7?'b-danger':'b-warning' ?>"><?= $dias_p ?> días</span>
+    </div>
+    <?php endforeach; ?>
+    <?php if (empty($prox_partos)): ?>
+    <div style="padding:24px;text-align:center;color:var(--text3);font-size:12px">Sin partos próximos en 30 días</div>
+    <?php endif; ?>
+  </div>
+</div>
+
+<!-- Distribución por estado reproductivo -->
+<div class="card">
+  <div class="sec-title mb-3">🧬 Estado reproductivo del hato</div>
+  <div class="grid g6">
+    <?php
+    $dist = array_count_values(array_column($animales,'estado_reproductivo'));
+    foreach ($estado_repro_color as $er => [$color, $lbl]):
+      $n = $dist[$er] ?? 0;
+    ?>
+    <div style="text-align:center;padding:12px;background:var(--bg3);border-radius:10px">
+      <div style="font-size:22px;font-weight:800;color:<?= $color ?>"><?= $n ?></div>
+      <div style="font-size:11px;color:var(--text3);margin-top:4px"><?= $lbl ?></div>
+    </div>
+    <?php endforeach; ?>
+  </div>
+</div>
+
+
+<?php elseif ($sub === 'animales'): // ══ ANIMALES ══?> 
+	
+<?php	
+	
+	if ($action === 'nueva' || $action === 'editar'):
+    $editing = null;
+    if ($action === 'editar' && isset($_GET['id'])) {
+        $st = $db->prepare("SELECT * FROM gv_animales WHERE id=?"); $st->execute([(int)$_GET['id']]); $editing = $st->fetch();
+    }
+?>
+<div class="card" style="max-width:800px">
+  <div class="sec-header">
+    <div><div class="sec-title"><?= $action==='editar'?'Editar':'Nuevo'?> Animal</div></div>
+    <a href="?p=ganado&sub=animales" class="btn btn-ghost btn-sm">← Volver</a>
+  </div>
+  <form method="POST" enctype="multipart/form-data">
+    <input type="hidden" name="action" value="save_animal">
+    <input type="hidden" name="id" value="<?= $editing['id']??'' ?>">
+
+    <div class="gv-form-section"><div class="gv-form-section-title">🏷️ Identificación</div>
+      <div class="form-row-3">
+        <div class="form-group"><label class="form-label">Código interno</label><input class="form-input" name="codigo_interno" value="<?= clean($editing['codigo_interno']??'') ?>"></div>
+        <div class="form-group"><label class="form-label required">N° Arete</label><input class="form-input" name="numero_arete" value="<?= clean($editing['numero_arete']??'') ?>" required></div>
+        <div class="form-group"><label class="form-label">RFID</label><input class="form-input" name="rfid" value="<?= clean($editing['rfid']??'') ?>"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Nombre</label><input class="form-input" name="nombre" value="<?= clean($editing['nombre']??'') ?>"></div>
+        <div class="form-group"><label class="form-label">Foto</label><input class="form-input" type="file" name="foto" accept="image/*"></div>
+      </div>
+    </div>
+
+    <div class="gv-form-section"><div class="gv-form-section-title">📋 Datos generales</div>
+      <div class="form-row-3">
+        <div class="form-group"><label class="form-label required">Sexo</label>
+          <select class="form-input" name="sexo" required><option value="hembra" <?= ($editing['sexo']??'')==='hembra'?'selected':'' ?>>Hembra</option><option value="macho" <?= ($editing['sexo']??'')==='macho'?'selected':'' ?>>Macho</option></select>
+        </div>
+        <div class="form-group"><label class="form-label">Raza</label><input class="form-input" name="raza" value="<?= clean($editing['raza']??'') ?>" placeholder="Ej: Holstein, Brown Swiss"></div>
+        <div class="form-group"><label class="form-label">Color</label><input class="form-input" name="color" value="<?= clean($editing['color']??'') ?>"></div>
+      </div>
+      <div class="form-row-3">
+        <div class="form-group"><label class="form-label">Fecha nacimiento</label><input class="form-input" type="date" name="fecha_nacimiento" value="<?= clean($editing['fecha_nacimiento']??'') ?>"></div>
+        <div class="form-group"><label class="form-label">Tipo</label>
+          <select class="form-input" name="tipo">
+            <?php foreach(['leche'=>'Leche','carne'=>'Carne','reproductor'=>'Reproductor','mixto'=>'Mixto','cria'=>'Cría'] as $k=>$v): ?>
+            <option value="<?= $k ?>" <?= ($editing['tipo']??'mixto')===$k?'selected':'' ?>><?= $v ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Estado reproductivo</label>
+          <select class="form-input" name="estado_reproductivo">
+            <?php foreach(array_keys($estado_repro_color) as $er): ?>
+            <option value="<?= $er ?>" <?= ($editing['estado_reproductivo']??'vacia')===$er?'selected':'' ?>><?= ucfirst($er) ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="gv-form-section"><div class="gv-form-section-title">📍 Ubicación</div>
+      <div class="form-row-3">
+        <div class="form-group"><label class="form-label">Fundo</label>
+          <select class="form-input" name="fundo_id">
+            <option value="">— Sin asignar —</option>
+            <?php foreach($fundos as $f): ?><option value="<?= $f['id'] ?>" <?= ($editing['fundo_id']??'')==$f['id']?'selected':'' ?>><?= clean($f['nombre']) ?></option><?php endforeach; ?>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Lote</label>
+          <select class="form-input" name="lote_id">
+            <option value="">— Sin lote —</option>
+            <?php foreach($lotes as $l): ?><option value="<?= $l['id'] ?>" <?= ($editing['lote_id']??'')==$l['id']?'selected':'' ?>><?= clean($l['nombre']) ?></option><?php endforeach; ?>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Origen</label>
+          <select class="form-input" name="origen">
+            <option value="nacimiento" <?= ($editing['origen']??'')==='nacimiento'?'selected':'' ?>>Nacimiento</option>
+            <option value="compra" <?= ($editing['origen']??'')==='compra'?'selected':'' ?>>Compra</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Fecha ingreso</label><input class="form-input" type="date" name="fecha_ingreso" value="<?= clean($editing['fecha_ingreso']??date('Y-m-d')) ?>"></div>
+        <div class="form-group"><label class="form-label">Estado</label>
+          <select class="form-input" name="estado">
+            <?php foreach(['activo'=>'Activo','vendido'=>'Vendido','muerto'=>'Muerto','dado_de_baja'=>'Dado de baja','cuarentena'=>'Cuarentena'] as $k=>$v): ?>
+            <option value="<?= $k ?>" <?= ($editing['estado']??'activo')===$k?'selected':'' ?>><?= $v ?></option>
+            <?php endforeach; ?>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="gv-form-section"><div class="gv-form-section-title">📊 Datos productivos</div>
+      <div class="form-row-3">
+        <div class="form-group"><label class="form-label">Peso inicial (kg)</label><input class="form-input" type="number" step="0.1" name="peso_inicial" value="<?= clean($editing['peso_inicial']??'') ?>"></div>
+        <div class="form-group"><label class="form-label">Peso actual (kg)</label><input class="form-input" type="number" step="0.1" name="peso_actual" value="<?= clean($editing['peso_actual']??'') ?>"></div>
+        <div class="form-group"><label class="form-label">Producción estimada (L/día)</label><input class="form-input" type="number" step="0.1" name="produccion_estimada" value="<?= clean($editing['produccion_estimada']??'') ?>"></div>
+      </div>
+      <div class="form-group"><label class="form-label">Observaciones</label><textarea class="form-input" name="notas"><?= clean($editing['notas']??'') ?></textarea></div>
+    </div>
+
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Guardar animal</button><a href="?p=ganado&sub=animales" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+
+<?php else: // Lista animales ?>
+<div class="flex items-center justify-between mb-3">
+  <div><div class="page-title">🏷️ Registro de Animales</div><div class="page-desc"><?= count($animales) ?> animales activos</div></div>
+  <a href="?p=ganado&sub=animales&action=nueva" class="btn btn-primary">＋ Registrar Animal</a>
+</div>
+<div class="grid g4">
+  <?php foreach ($animales as $a):
+    $foto_url = !empty($a['foto']) && file_exists(UPLOADS_PATH.'/'.$a['foto']) ? BASE_URL.'/public/uploads/'.$a['foto'] : null;
+    $erc = $estado_repro_color[$a['estado_reproductivo']] ?? ['#94a3b8','—'];
+  ?>
+  <div class="gv-animal-card" onclick="window.location.href='?p=ganado&sub=animales&action=editar&id=<?= $a['id'] ?>'">
+    <?php if ($foto_url): ?>
+    <img src="<?= $foto_url ?>" style="width:100%;height:120px;object-fit:cover">
+    <?php else: ?>
+    <div style="width:100%;height:120px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);display:flex;align-items:center;justify-content:center;font-size:52px">🐄</div>
+    <?php endif; ?>
+    <div style="padding:12px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="font-size:14px;font-weight:700"><?= clean($a['nombre']??'#'.$a['numero_arete']) ?></div>
+        <span style="font-size:12px;color:<?= $a['sexo']==='macho'?'#3b82f6':'#ec4899' ?>"><?= $a['sexo']==='macho'?'♂':'♀' ?></span>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px">Arete: <?= clean($a['numero_arete']) ?> · <?= clean($a['raza']??'—') ?></div>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <span class="gv-repro" style="background:<?= $erc[0] ?>"><?= $erc[1] ?></span>
+        <?php if ($a['peso_actual']): ?><span style="font-size:11px;color:var(--text3)"><?= $a['peso_actual'] ?> kg</span><?php endif; ?>
+      </div>
+      <?php if ($a['fundo']): ?><div style="font-size:10px;color:var(--text3);margin-top:4px">📍 <?= clean($a['fundo']) ?></div><?php endif; ?>
+    </div>
+  </div>
+  <?php endforeach; ?>
+  <?php if (empty($animales)): ?>
+  <div class="card text-center" style="grid-column:1/-1;padding:60px">
+    <div style="font-size:48px;margin-bottom:14px;opacity:.3">🐄</div>
+    <div style="font-size:15px;font-weight:600;margin-bottom:8px">Sin animales registrados</div>
+    <a href="?p=ganado&sub=animales&action=nueva" class="btn btn-primary">Registrar primer animal</a>
+  </div>
+  
+</div>
+
+ 
+<?php elseif ($sub === 'reproduccion'): // ══ REPRODUCCIÓN ══ 
+
+
+
+  $repr_tab = $_GET['rtab'] ?? 'celos';
+  $celos    = []; $insems = []; $prenez_l = []; $partos_l = [];
+  try {
+    $celos  = $db->query("SELECT ce.*,a.nombre as animal,a.numero_arete,u.nombre as vet FROM gv_celos ce JOIN gv_animales a ON a.id=ce.animal_id LEFT JOIN usuarios u ON u.id=ce.veterinario_id ORDER BY ce.fecha DESC LIMIT 30")->fetchAll();
+    $insems = $db->query("SELECT i.*,a.nombre as animal,a.numero_arete,t.nombre as toro FROM gv_inseminaciones i JOIN gv_animales a ON a.id=i.animal_id LEFT JOIN gv_toros t ON t.id=i.toro_id ORDER BY i.fecha DESC LIMIT 30")->fetchAll();
+    $prenez_l = $db->query("SELECT p.*,a.nombre as animal,a.numero_arete,u.nombre as vet FROM gv_prenez p JOIN gv_animales a ON a.id=p.animal_id LEFT JOIN usuarios u ON u.id=p.veterinario_id ORDER BY p.fecha_diagnostico DESC LIMIT 30")->fetchAll();
+    $partos_l = $db->query("SELECT pa.*,a.nombre as madre,a.numero_arete FROM gv_partos pa JOIN gv_animales a ON a.id=pa.madre_id ORDER BY pa.fecha_parto DESC LIMIT 20")->fetchAll();
+  } catch(Exception $e) {}
+?>
+<div class="sec-header mb-3">
+  <div><div class="page-title">🧬 Reproducción</div></div>
+  <div class="flex gap-1">
+    <?php foreach(['celos'=>'🌡️ Celos','insem'=>'🔬 Inseminaciones','prenez'=>'🤰 Preñez','partos'=>'🐃 Partos'] as $rt=>$rl): ?>
+    <a href="?p=ganado&sub=reproduccion&rtab=<?= $rt ?>" class="btn btn-sm <?= $repr_tab===$rt?'btn-primary':'btn-ghost' ?>"><?= $rl ?></a>
+    <?php endforeach; ?>
+  </div>
+</div>
+
+<?php if ($repr_tab === 'celos'): ?>
+<div class="flex justify-end mb-2"><a href="?p=ganado&sub=reproduccion&rtab=celos&action=nueva_celo" class="btn btn-primary btn-sm">＋ Registrar Celo</a></div>
+<?php if ($action === 'nueva_celo'): ?>
+<div class="card" style="max-width:640px">
+  <div class="sec-title mb-3">🌡️ Control de Celo</div>
+  <form method="POST">
+    <input type="hidden" name="action" value="save_celo">
+    <div class="form-row"><div class="form-group"><label class="form-label required">Animal</label><select class="form-input" name="animal_id" required><option value="">— Seleccionar —</option><?php foreach($animales as $a): if($a['sexo']==='hembra'): ?><option value="<?= $a['id'] ?>"><?= clean($a['nombre']??$a['numero_arete']) ?> (<?= $a['numero_arete'] ?>)</option><?php endif; endforeach; ?></select></div><div class="form-group"><label class="form-label">Veterinario</label><select class="form-input" name="veterinario_id"><option value="">—</option><?php foreach($vets as $v): ?><option value="<?= $v['id'] ?>"><?= clean($v['nombre']) ?></option><?php endforeach; ?></select></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label required">Fecha</label><input class="form-input" type="date" name="fecha" value="<?= date('Y-m-d') ?>" required></div><div class="form-group"><label class="form-label">Hora</label><input class="form-input" type="time" name="hora" value="<?= date('H:i') ?>"></div></div>
+    <div class="form-group"><label class="form-label">Método de detección</label><select class="form-input" name="metodo_deteccion"><option value="visual">Visual</option><option value="parche">Parche</option><option value="georritmo">Georritmo</option><option value="chaleco_marcador">Chaleco marcador</option><option value="otro">Otro</option></select></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Temperatura (°C)</label><input class="form-input" type="number" step="0.1" name="temperatura"></div><div class="form-group" style="padding-top:24px"><label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" name="inflamacion" style="accent-color:var(--primary)"> Inflamación vulvar</label></div></div>
+    <div class="form-group"><label class="form-label">Observaciones de comportamiento</label><textarea class="form-input" name="comportamiento" placeholder="Monta, inquietud, mucosidad..."></textarea></div>
+    <div class="form-group"><label class="form-label">Observaciones generales</label><textarea class="form-input" name="observaciones"></textarea></div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:14px;cursor:pointer;background:var(--primary-l);padding:10px;border-radius:8px"><input type="checkbox" name="programar_inseminacion" checked style="accent-color:var(--primary)"><strong>✅ Programar inseminación automáticamente</strong></label>
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Guardar celo</button><a href="?p=ganado&sub=reproduccion&rtab=celos" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+<?php else: ?>
+<div class="card" style="padding:0">
+  <table class="vtable"><thead><tr><th>Animal</th><th>Fecha</th><th>Método</th><th>Temperatura</th><th>Inflamación</th><th>Programó Insem.</th><th>Veterinario</th></tr></thead>
+  <tbody>
+  <?php foreach($celos as $c): ?>
+  <tr><td class="td-main"><?= clean($c['animal']??$c['numero_arete']) ?><div class="text-xs text-muted">Arete: <?= clean($c['numero_arete']) ?></div></td><td><?= date('d/m/Y',strtotime($c['fecha'])) ?><?= $c['hora']?' '.substr($c['hora'],0,5):'' ?></td><td><span class="badge b-info"><?= ucfirst(str_replace('_',' ',$c['metodo_deteccion'])) ?></span></td><td><?= $c['temperatura']?$c['temperatura'].'°C':'—' ?></td><td><?= $c['inflamacion']?'<span class="badge b-warning">Sí</span>':'No' ?></td><td><?= $c['programar_inseminacion']?'<span class="badge b-success">✅ Sí</span>':'No' ?></td><td class="text-muted"><?= clean($c['vet']??'—') ?></td></tr>
+  <?php endforeach; if(empty($celos)): ?><tr><td colspan="7" class="text-center text-muted" style="padding:32px">Sin registros de celo.</td></tr><?php endif; ?>
+  </tbody></table>
+</div>
+<?php endif; ?>
+
+<?php elseif ($repr_tab === 'insem'): ?>
+<div class="flex justify-end mb-2"><a href="?p=ganado&sub=reproduccion&rtab=insem&action=nueva_insem" class="btn btn-primary btn-sm">＋ Registrar Inseminación</a></div>
+<?php if ($action === 'nueva_insem'): ?>
+<div class="card" style="max-width:640px">
+  <div class="sec-title mb-3">🔬 Inseminación Artificial</div>
+  <form method="POST">
+    <input type="hidden" name="action" value="save_insem">
+    <div class="gv-form-section"><div class="gv-form-section-title">Datos generales</div>
+      <div class="form-row"><div class="form-group"><label class="form-label required">Animal (hembra)</label><select class="form-input" name="animal_id" required><option value="">— Seleccionar —</option><?php foreach($animales as $a): if($a['sexo']==='hembra'): ?><option value="<?= $a['id'] ?>"><?= clean($a['nombre']??$a['numero_arete']) ?> (<?= $a['numero_arete'] ?>)</option><?php endif; endforeach; ?></select></div><div class="form-group"><label class="form-label">Técnico inseminador</label><select class="form-input" name="tecnico_id"><option value="">—</option><?php foreach($vets as $v): ?><option value="<?= $v['id'] ?>"><?= clean($v['nombre']) ?></option><?php endforeach; ?></select></div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label required">Fecha</label><input class="form-input" type="date" name="fecha" value="<?= date('Y-m-d') ?>" required></div><div class="form-group"><label class="form-label">Hora</label><input class="form-input" type="time" name="hora" value="<?= date('H:i') ?>"></div></div>
+    </div>
+    <div class="gv-form-section"><div class="gv-form-section-title">Datos del semen</div>
+      <div class="form-row"><div class="form-group"><label class="form-label">Toro</label><select class="form-input" name="toro_id"><option value="">— Sin especificar —</option><?php foreach($toros as $t): ?><option value="<?= $t['id'] ?>"><?= clean($t['nombre']) ?> (<?= clean($t['raza']??'') ?>)</option><?php endforeach; ?></select></div><div class="form-group"><label class="form-label">Código de pajilla</label>
+        <?php $pajillas = []; try { $pajillas = $db->query("SELECT codigo_pajilla,toro_nombre,raza FROM gv_banco_semen WHERE activo=1 AND (cantidad-cantidad_usada)>0 ORDER BY codigo_pajilla")->fetchAll(); } catch(Exception $e){} ?>
+        <select class="form-input" name="codigo_pajilla"><option value="">— Seleccionar —</option><?php foreach($pajillas as $pj): ?><option value="<?= clean($pj['codigo_pajilla']) ?>"><?= clean($pj['codigo_pajilla']) ?> — <?= clean($pj['toro_nombre']??'') ?></option><?php endforeach; ?></select>
+      </div></div>
+      <div class="form-row"><div class="form-group"><label class="form-label">Raza genética</label><input class="form-input" name="raza_genetica"></div><div class="form-group"><label class="form-label">Tipo semen</label><select class="form-input" name="procedencia_semen"><option value="nacional">Nacional</option><option value="importado">Importado</option><option value="sexado">Sexado</option></select></div></div>
+    </div>
+    <div class="form-group"><label class="form-label">Observaciones</label><textarea class="form-input" name="observaciones"></textarea></div>
+    <div class="form-group"><label class="form-label">Programar diagnóstico preñez</label><input class="form-input" type="date" name="fecha_diagnostico_prenez" value="<?= date('Y-m-d',strtotime('+45 days')) ?>"></div>
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Guardar inseminación</button><a href="?p=ganado&sub=reproduccion&rtab=insem" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+<?php else: ?>
+<div class="card" style="padding:0">
+  <table class="vtable"><thead><tr><th>Animal</th><th>Fecha</th><th>Toro / Pajilla</th><th>Tipo semen</th><th>Diagnóstico preñez</th><th>Resultado</th></tr></thead>
+  <tbody>
+  <?php foreach($insems as $i):
+    $res_badge=['pendiente'=>'b-warning','prenada'=>'b-success','vacia'=>'b-danger','repeticion'=>'b-orange'];
+  ?>
+  <tr><td class="td-main"><?= clean($i['animal']??$i['numero_arete']) ?></td><td><?= date('d/m/Y',strtotime($i['fecha'])) ?></td><td><?= clean($i['toro']??'—') ?><div class="text-xs text-muted"><?= clean($i['codigo_pajilla']??'') ?></div></td><td><span class="badge b-info"><?= ucfirst($i['procedencia_semen']) ?></span></td><td class="text-muted"><?= $i['fecha_diagnostico_prenez']?date('d/m/Y',strtotime($i['fecha_diagnostico_prenez'])):'—' ?></td><td><span class="badge <?= $res_badge[$i['resultado']]??'b-gray' ?>"><?= ucfirst($i['resultado']) ?></span></td></tr>
+<?php endforeach; ?> <?php if(empty($insems)): ?> <tr> <td colspan="6" class="text-center text-muted" style="padding:32px"> Sin inseminaciones registradas. </td> </tr>  
+</tbody></table>
+</div>
+
+
+<?php elseif ($repr_tab === 'prenez'): ?>
+<div class="flex justify-end mb-2"><a href="?p=ganado&sub=reproduccion&rtab=prenez&action=nuevo_diag" class="btn btn-primary btn-sm">＋ Diagnóstico Preñez</a></div>
+<?php if ($action === 'nuevo_diag'): ?>
+<div class="card" style="max-width:580px">
+  <div class="sec-title mb-3">🤰 Diagnóstico de Preñez</div>
+  <form method="POST">
+    <input type="hidden" name="action" value="save_prenez">
+    <div class="form-row"><div class="form-group"><label class="form-label required">Animal</label><select class="form-input" name="animal_id" required><option value="">—</option><?php foreach($animales as $a): if($a['sexo']==='hembra'): ?><option value="<?= $a['id'] ?>"><?= clean($a['nombre']??$a['numero_arete']) ?></option><?php endif; endforeach; ?></select></div><div class="form-group"><label class="form-label">Veterinario</label><select class="form-input" name="veterinario_id"><option value="">—</option><?php foreach($vets as $v): ?><option value="<?= $v['id'] ?>"><?= clean($v['nombre']) ?></option><?php endforeach; ?></select></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label required">Fecha diagnóstico</label><input class="form-input" type="date" name="fecha_diagnostico" value="<?= date('Y-m-d') ?>" required></div><div class="form-group"><label class="form-label">Fecha inseminación</label><input class="form-input" type="date" name="fecha_inseminacion" id="fecha_insem_input" oninput="calcParto()"></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Método</label><select class="form-input" name="metodo"><option value="ecografia">Ecografía</option><option value="tacto_rectal">Tacto rectal</option><option value="laboratorio">Laboratorio</option></select></div><div class="form-group"><label class="form-label required">Resultado</label><select class="form-input" name="resultado" required onchange="document.getElementById('parto_fecha_wrap').style.display=this.value==='prenada'?'block':'none'"><option value="vacia">Vacía</option><option value="prenada">Preñada</option></select></div></div>
+    <div id="parto_fecha_wrap" style="display:none" class="alert alert-success"><span class="alert-icon">📅</span>Fecha probable de parto (estimada automáticamente ~283 días): <strong id="fecha_parto_est">—</strong></div>
+    <div class="form-group"><label class="form-label">Observaciones</label><textarea class="form-input" name="observaciones"></textarea></div>
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Guardar diagnóstico</button><a href="?p=ganado&sub=reproduccion&rtab=prenez" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+<script>
+function calcParto(){
+  const fi=document.getElementById('fecha_insem_input').value;
+  if(!fi) return;
+  const d=new Date(fi);d.setDate(d.getDate()+283);
+  document.getElementById('fecha_parto_est').textContent=d.toLocaleDateString('es-PE');
+}
+</script>
+<?php else: ?>
+<div class="card" style="padding:0">
+  <table class="vtable"><thead><tr><th>Animal</th><th>Fecha diagnóstico</th><th>Fecha inseminación</th><th>Método</th><th>Resultado</th><th>Probable parto</th><th>Veterinario</th></tr></thead>
+  <tbody>
+  <?php foreach($prenez_l as $p): $res_badge=['prenada'=>'b-success','vacia'=>'b-danger','aborto'=>'b-warning']; ?>
+  <tr><td class="td-main"><?= clean($p['animal']??$p['numero_arete']) ?></td><td><?= date('d/m/Y',strtotime($p['fecha_diagnostico'])) ?></td><td class="text-muted"><?= $p['fecha_inseminacion']?date('d/m/Y',strtotime($p['fecha_inseminacion'])):'—' ?></td><td><span class="badge b-info"><?= ucfirst(str_replace('_',' ',$p['metodo'])) ?></span></td><td><span class="badge <?= $res_badge[$p['resultado']]??'b-gray' ?>"><?= ucfirst($p['resultado']) ?></span></td><td class="font-semi" style="color:var(--warning-d)"><?= $p['fecha_probable_parto']?date('d/m/Y',strtotime($p['fecha_probable_parto'])):'—' ?></td><td class="text-muted"><?= clean($p['vet']??'—') ?></td></tr>
+  <?php endforeach; if(empty($prenez_l)): ?><tr><td colspan="7" class="text-center text-muted" style="padding:32px">Sin diagnósticos registrados.</td></tr><?php endif; ?>
+  </tbody></table>
+</div>
+<?php endif; ?>
+
+<?php elseif ($repr_tab === 'partos'): ?>
+<div class="flex justify-end mb-2"><a href="?p=ganado&sub=reproduccion&rtab=partos&action=nuevo_parto" class="btn btn-primary btn-sm">＋ Registrar Parto</a></div>
+<?php if ($action === 'nuevo_parto'): ?>
+<div class="card" style="max-width:640px">
+  <div class="sec-title mb-3">🐃 Registro de Parto</div>
+  <form method="POST">
+    <input type="hidden" name="action" value="save_parto">
+    <div class="form-row"><div class="form-group"><label class="form-label required">Madre</label><select class="form-input" name="madre_id" required><option value="">—</option><?php foreach($animales as $a): if($a['sexo']==='hembra'&&$a['estado_reproductivo']==='prenada'): ?><option value="<?= $a['id'] ?>"><?= clean($a['nombre']??$a['numero_arete']) ?> (<?= $a['numero_arete'] ?>)</option><?php endif; endforeach; ?></select></div><div class="form-group"><label class="form-label">Veterinario</label><select class="form-input" name="veterinario_id"><option value="">—</option><?php foreach($vets as $v): ?><option value="<?= $v['id'] ?>"><?= clean($v['nombre']) ?></option><?php endforeach; ?></select></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label required">Fecha parto</label><input class="form-input" type="date" name="fecha_parto" value="<?= date('Y-m-d') ?>" required></div><div class="form-group"><label class="form-label">Hora</label><input class="form-input" type="time" name="hora_parto"></div></div>
+    <div class="form-group"><label class="form-label">Tipo de parto</label><select class="form-input" name="tipo"><option value="natural">Natural</option><option value="cesarea">Cesárea</option><option value="distocico">Distócico</option><option value="inducido">Inducido</option></select></div>
+    <div class="form-group"><label class="form-label">Complicaciones</label><textarea class="form-input" name="complicaciones" style="min-height:55px"></textarea></div>
+    <div class="gv-form-section"><div class="gv-form-section-title">🐄 Datos de la cría</div>
+      <div class="form-row-3"><div class="form-group"><label class="form-label">Sexo cría</label><select class="form-input" name="cria_sexo"><option value="">—</option><option value="macho">Macho</option><option value="hembra">Hembra</option></select></div><div class="form-group"><label class="form-label">Peso cría (kg)</label><input class="form-input" type="number" step="0.1" name="cria_peso"></div><div class="form-group"><label class="form-label">Estado cría</label><select class="form-input" name="cria_estado"><option value="vivo">Vivo</option><option value="muerto">Muerto</option><option value="debil">Débil</option></select></div></div>
+      <div class="form-group"><label class="form-label">N° Arete de la cría</label><input class="form-input" name="cria_arete" placeholder="Asignar arete"></div>
+    </div>
+    <div class="form-group"><label class="form-label">Observaciones</label><textarea class="form-input" name="observaciones"></textarea></div>
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Registrar parto</button><a href="?p=ganado&sub=reproduccion&rtab=partos" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+<?php else: ?>
+<div class="card" style="padding:0">
+  <table class="vtable"><thead><tr><th>Madre</th><th>Fecha parto</th><th>Tipo</th><th>Cría sexo</th><th>Peso cría</th><th>Estado cría</th><th>Veterinario</th></tr></thead>
+  <tbody>
+  <?php foreach($partos_l as $p): ?>
+  <tr><td class="td-main"><?= clean($p['madre']??$p['numero_arete']) ?></td><td><?= date('d/m/Y',strtotime($p['fecha_parto'])) ?></td><td><span class="badge b-info"><?= ucfirst($p['tipo']) ?></span></td><td><?= $p['cria_sexo']?ucfirst($p['cria_sexo']):'—' ?></td><td><?= $p['cria_peso']?$p['cria_peso'].' kg':'—' ?></td><td><span class="badge <?= $p['cria_estado']==='vivo'?'b-success':($p['cria_estado']==='muerto'?'b-danger':'b-warning') ?>"><?= ucfirst($p['cria_estado']??'—') ?></span></td><td class="text-muted"><?= $p['veterinario_id']?'Dr/a.':'—' ?></td></tr>
+  <?php endforeach; if(empty($partos_l)): ?><tr><td colspan="7" class="text-center text-muted" style="padding:32px">Sin partos registrados.</td></tr><?php endif; ?>
+  </tbody></table>
+</div>
+<?php endif; ?>
+
+<?php // ══ LECHE ══
+elseif ($sub === 'leche'):
+  if ($action === 'nueva'): ?>
+<div class="card" style="max-width:580px">
+  <div class="sec-header"><div class="sec-title">🥛 Producción de Leche</div><a href="?p=ganado&sub=leche" class="btn btn-ghost btn-sm">← Volver</a></div>
+  <form method="POST">
+    <input type="hidden" name="action" value="save_leche">
+    <div class="form-row"><div class="form-group"><label class="form-label required">Animal</label><select class="form-input" name="animal_id" required><option value="">—</option><?php foreach($animales as $a): if($a['sexo']==='hembra'&&in_array($a['estado_reproductivo'],['lactante','prenada'])): ?><option value="<?= $a['id'] ?>"><?= clean($a['nombre']??$a['numero_arete']) ?></option><?php endif; endforeach; ?></select></div><div class="form-group"><label class="form-label">Lote</label><select class="form-input" name="lote_id"><option value="">—</option><?php foreach($lotes as $l): ?><option value="<?= $l['id'] ?>"><?= clean($l['nombre']) ?></option><?php endforeach; ?></select></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label required">Fecha</label><input class="form-input" type="date" name="fecha" value="<?= date('Y-m-d') ?>" required></div><div class="form-group"><label class="form-label">Turno</label><select class="form-input" name="turno"><option value="mañana">Mañana</option><option value="tarde">Tarde</option><option value="noche">Noche</option></select></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label required">Litros producidos</label><input class="form-input" type="number" step="0.1" name="litros" required></div><div class="form-group"><label class="form-label">Calidad</label><select class="form-input" name="calidad"><option value="A">A — Premium</option><option value="B">B — Estándar</option><option value="C">C — Baja</option><option value="rechazo">Rechazo</option></select></div></div>
+    <div class="form-group"><label class="form-label">Observaciones</label><input class="form-input" name="observaciones"></div>
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Guardar</button><a href="?p=ganado&sub=leche" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+<?php else:
+  $leche_list = []; try { $leche_list = $db->query("SELECT l.*,a.nombre as animal,a.numero_arete FROM gv_leche l JOIN gv_animales a ON a.id=l.animal_id ORDER BY l.fecha DESC,l.turno LIMIT 60")->fetchAll(); } catch(Exception $e){}
+?>
+<div class="flex items-center justify-between mb-3">
+  <div><div class="page-title">🥛 Producción de Leche</div></div>
+  <a href="?p=ganado&sub=leche&action=nueva" class="btn btn-primary">＋ Registrar producción</a>
+</div>
+<div class="card" style="padding:0">
+  <table class="vtable"><thead><tr><th>Fecha</th><th>Animal</th><th>Turno</th><th>Litros</th><th>Calidad</th><th>Observaciones</th></tr></thead>
+  <tbody>
+  <?php foreach($leche_list as $l): ?>
+  <tr><td><?= date('d/m/Y',strtotime($l['fecha'])) ?></td><td class="td-main"><?= clean($l['animal']??$l['numero_arete']) ?></td><td><span class="badge b-info"><?= ucfirst($l['turno']) ?></span></td><td class="font-bold" style="color:var(--primary)"><?= $l['litros'] ?> L</td><td><span class="badge <?= $l['calidad']==='A'?'b-success':($l['calidad']==='rechazo'?'b-danger':'b-warning') ?>"><?= $l['calidad'] ?></span></td><td class="text-muted"><?= clean(substr($l['observaciones']??'',0,40)) ?></td></tr>
+  <?php endforeach; if(empty($leche_list)): ?><tr><td colspan="6" class="text-center text-muted" style="padding:32px">Sin registros de producción.</td></tr><?php endif; ?>
+  </tbody></table>
+</div>
+<?php endif; ?>
+
+<?php // ══ PESO ══
+elseif ($sub === 'peso'):
+  if ($action === 'nueva'): ?>
+<div class="card" style="max-width:560px">
+  <div class="sec-header"><div class="sec-title">⚖️ Control de Peso</div><a href="?p=ganado&sub=peso" class="btn btn-ghost btn-sm">← Volver</a></div>
+  <form method="POST">
+    <input type="hidden" name="action" value="save_peso">
+    <div class="form-row"><div class="form-group"><label class="form-label required">Animal</label><select class="form-input" name="animal_id" required><option value="">—</option><?php foreach($animales as $a): ?><option value="<?= $a['id'] ?>"><?= clean($a['nombre']??$a['numero_arete']) ?> (<?= $a['numero_arete'] ?>)</option><?php endforeach; ?></select></div><div class="form-group"><label class="form-label required">Fecha</label><input class="form-input" type="date" name="fecha" value="<?= date('Y-m-d') ?>" required></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label required">Peso actual (kg)</label><input class="form-input" type="number" step="0.1" name="peso" required></div><div class="form-group"><label class="form-label">Condición corporal (1-5)</label><input class="form-input" type="number" min="1" max="5" step="0.5" name="condicion_corporal" placeholder="BCS 1-5"></div></div>
+    <div class="form-group"><label class="form-label">Observaciones</label><textarea class="form-input" name="observaciones" style="min-height:55px"></textarea></div>
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Guardar pesaje</button><a href="?p=ganado&sub=peso" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+<?php else:
+  $pesos_list=[]; try{$pesos_list=$db->query("SELECT p.*,a.nombre as animal,a.numero_arete FROM gv_pesos p JOIN gv_animales a ON a.id=p.animal_id ORDER BY p.fecha DESC LIMIT 50")->fetchAll();}catch(Exception $e){}
+?>
+<div class="flex items-center justify-between mb-3">
+  <div><div class="page-title">⚖️ Control de Peso</div></div>
+  <a href="?p=ganado&sub=peso&action=nueva" class="btn btn-primary">＋ Registrar pesaje</a>
+</div>
+<div class="card" style="padding:0">
+  <table class="vtable"><thead><tr><th>Fecha</th><th>Animal</th><th>Peso actual</th><th>Peso anterior</th><th>Ganancia/día</th><th>BCS</th></tr></thead>
+  <tbody>
+  <?php foreach($pesos_list as $p): $gan=$p['ganancia_diaria']??null; ?>
+  <tr><td><?= date('d/m/Y',strtotime($p['fecha'])) ?></td><td class="td-main"><?= clean($p['animal']??$p['numero_arete']) ?></td><td class="font-bold"><?= $p['peso'] ?> kg</td><td class="text-muted"><?= $p['peso_anterior']?$p['peso_anterior'].' kg':'—' ?></td><td class="font-semi" style="color:<?= $gan>0?'var(--success)':($gan<0?'var(--danger)':'var(--text)') ?>"><?= $gan!==null?($gan>0?'+'.'':'').$gan.' kg/día':'—' ?></td><td><?= $p['condicion_corporal']?$p['condicion_corporal'].'/5':'—' ?></td></tr>
+  <?php endforeach; if(empty($pesos_list)):{?><tr><td colspan="6" class="text-center text-muted" style="padding:32px">Sin registros de peso.</td></tr><?php }?>
+  </tbody></table>
+</div>
+
+
+<?php elseif ($sub === 'fundos'):
+
+  if ($action === 'nuevo' || $action === 'editar'): $ef=null;
+  if($action==='editar'&&isset($_GET['id'])){$st=$db->prepare("SELECT * FROM gv_fundos WHERE id=?");$st->execute([(int)$_GET['id']]);$ef=$st->fetch();}?>
+<div class="card" style="max-width:640px">
+  <div class="sec-header"><div class="sec-title"><?= $action==='editar'?'Editar':'Nuevo'?> Fundo / Hacienda</div><a href="?p=ganado&sub=fundos" class="btn btn-ghost btn-sm">← Volver</a></div>
+  <form method="POST"><input type="hidden" name="action" value="save_fundo"><input type="hidden" name="id" value="<?= $ef['id']??'' ?>">
+    <div class="form-row"><div class="form-group"><label class="form-label">Código</label><input class="form-input" name="codigo" value="<?= clean($ef['codigo']??'') ?>"></div><div class="form-group"><label class="form-label required">Nombre</label><input class="form-input" name="nombre" value="<?= clean($ef['nombre']??'') ?>" required></div></div>
+    <div class="form-row-3"><div class="form-group"><label class="form-label">Departamento</label><input class="form-input" name="departamento" value="<?= clean($ef['departamento']??'') ?>"></div><div class="form-group"><label class="form-label">Provincia</label><input class="form-input" name="provincia" value="<?= clean($ef['provincia']??'') ?>"></div><div class="form-group"><label class="form-label">Distrito</label><input class="form-input" name="distrito" value="<?= clean($ef['distrito']??'') ?>"></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Dirección</label><input class="form-input" name="direccion" value="<?= clean($ef['direccion']??'') ?>"></div><div class="form-group"><label class="form-label">Hectáreas</label><input class="form-input" type="number" step="0.01" name="hectareas" value="<?= clean($ef['hectareas']??'') ?>"></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Responsable</label><input class="form-input" name="responsable" value="<?= clean($ef['responsable']??'') ?>"></div><div class="form-group"><label class="form-label">Teléfono</label><input class="form-input" name="telefono" value="<?= clean($ef['telefono']??'') ?>"></div></div>
+    <div class="form-group"><label class="form-label">Notas</label><textarea class="form-input" name="notas"><?= clean($ef['notas']??'') ?></textarea></div>
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Guardar</button><a href="?p=ganado&sub=fundos" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+<?php else: ?>
+<div class="flex items-center justify-between mb-3"><div class="page-title">🌿 Fundos / Haciendas</div><a href="?p=ganado&sub=fundos&action=nuevo" class="btn btn-primary">＋ Nuevo Fundo</a></div>
+<div class="grid g3">
+  <?php foreach($fundos as $f): $n_anim=count(array_filter($animales,fn($a)=>$a['fundo_id']==$f['id'])); ?>
+  <div class="card card-hover">
+    <div class="flex items-center gap-2 mb-2"><div class="stat-icon si-success" style="flex-shrink:0">🌿</div><div><div class="font-semi"><?= clean($f['nombre']) ?></div><?php if($f['codigo']): ?><div class="text-xs text-muted">Cód: <?= clean($f['codigo']) ?></div><?php endif; ?></div><a href="?p=ganado&sub=fundos&action=editar&id=<?= $f['id'] ?>" class="btn btn-xs btn-ghost" style="margin-left:auto">✏️</a></div>
+    <div class="grid g2 gap-2" style="font-size:12px">
+      <div><span class="text-muted">📍 Ubicación</span><br><?= clean(implode(', ',array_filter([$f['distrito'],$f['provincia'],$f['departamento']]))) ?></div>
+      <div><span class="text-muted">🐄 Animales</span><br><strong><?= $n_anim ?></strong></div>
+      <?php if($f['hectareas']): ?><div><span class="text-muted">📐 Hectáreas</span><br><?= number_format($f['hectareas'],1) ?></div><?php endif; ?>
+      <?php if($f['responsable']): ?><div><span class="text-muted">👤 Responsable</span><br><?= clean($f['responsable']) ?></div><?php endif; ?>
+    </div>
+  </div>
+  <?php endforeach; if(empty($fundos)): ?>
+  <div class="card text-center" style="grid-column:1/-1;padding:48px"><div style="font-size:40px;margin-bottom:12px;opacity:.3">🌿</div><div class="font-semi mb-2">Sin fundos registrados</div><a href="?p=ganado&sub=fundos&action=nuevo" class="btn btn-primary btn-sm">Registrar fundo</a></div>
+  <?php endif; ?>
+</div>
+<?php endif; ?>
+
+<?php // ══ BANCO SEMEN ══
+elseif ($sub === 'banco_semen'):
+  $semen_list=[]; try{$semen_list=$db->query("SELECT bs.*,(bs.cantidad-bs.cantidad_usada) as disponible FROM gv_banco_semen bs WHERE bs.activo=1 ORDER BY bs.fecha_vencimiento ASC")->fetchAll();}catch(Exception $e){}
+  if($action==='nueva'): ?>
+<div class="card" style="max-width:640px">
+  <div class="sec-header"><div class="sec-title">🧪 Ingreso Banco de Semen</div><a href="?p=ganado&sub=banco_semen" class="btn btn-ghost btn-sm">← Volver</a></div>
+  <form method="POST"><input type="hidden" name="action" value="save_semen">
+    <div class="form-row"><div class="form-group"><label class="form-label required">Código de pajilla</label><input class="form-input" name="codigo_pajilla" required></div><div class="form-group"><label class="form-label">Toro</label><select class="form-input" name="toro_id"><option value="">—</option><?php foreach($toros as $t): ?><option value="<?= $t['id'] ?>"><?= clean($t['nombre']) ?></option><?php endforeach; ?></select></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Nombre del toro</label><input class="form-input" name="toro_nombre"></div><div class="form-group"><label class="form-label">Raza</label><input class="form-input" name="raza"></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Procedencia</label><select class="form-input" name="procedencia"><option value="nacional">Nacional</option><option value="importado">Importado</option><option value="sexado">Sexado</option></select></div><div class="form-group"><label class="form-label required">Cantidad (dosis)</label><input class="form-input" type="number" name="cantidad" required></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Fecha ingreso</label><input class="form-input" type="date" name="fecha_ingreso" value="<?= date('Y-m-d') ?>"></div><div class="form-group"><label class="form-label">Fecha vencimiento</label><input class="form-input" type="date" name="fecha_vencimiento"></div></div>
+    <div class="form-row-3"><div class="form-group"><label class="form-label">Tanque</label><input class="form-input" name="tanque" placeholder="Ej: Tanque A"></div><div class="form-group"><label class="form-label">Temperatura (°C)</label><input class="form-input" type="number" step="0.1" name="temperatura" placeholder="-196"></div><div class="form-group"><label class="form-label">Ubic. física</label><input class="form-input" name="ubicacion_fisica" placeholder="Canastilla 3, nivel 2"></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Stock mínimo</label><input class="form-input" type="number" name="stock_minimo" value="5"></div><div class="form-group"><label class="form-label">Costo unitario (S/.)</label><input class="form-input" type="number" step="0.01" name="costo_unitario"></div></div>
+    <div class="form-group"><label class="form-label">Observaciones</label><textarea class="form-input" name="observaciones"></textarea></div>
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Registrar</button><a href="?p=ganado&sub=banco_semen" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+<?php else: ?>
+<div class="flex items-center justify-between mb-3"><div class="page-title">🧪 Banco de Semen</div><a href="?p=ganado&sub=banco_semen&action=nueva" class="btn btn-primary">＋ Ingresar Semen</a></div>
+<div class="card" style="padding:0">
+  <table class="vtable"><thead><tr><th>Pajilla</th><th>Toro</th><th>Raza</th><th>Procedencia</th><th>Disponible</th><th>Tanque</th><th>Temp.</th><th>Vencimiento</th><th>Estado</th></tr></thead>
+  <tbody>
+  <?php foreach($semen_list as $s):
+    $dv=(int)$s['disponible'];$sm=(int)$s['stock_minimo'];
+    $venc=$s['fecha_vencimiento']&&strtotime($s['fecha_vencimiento'])<time();
+  ?>
+  <tr>
+    <td class="td-main" style="font-family:monospace"><?= clean($s['codigo_pajilla']) ?></td>
+    <td><?= clean($s['toro_nombre']??'—') ?></td>
+    <td><?= clean($s['raza']??'—') ?></td>
+    <td><span class="badge b-info"><?= ucfirst($s['procedencia']) ?></span></td>
+    <td class="font-bold <?= $dv<=$sm?'color-danger':'' ?>"><?= $dv ?> / <?= $s['cantidad'] ?></td>
+    <td class="text-muted"><?= clean($s['tanque']??'—') ?></td>
+    <td class="text-muted"><?= $s['temperatura']?$s['temperatura'].'°C':'—' ?></td>
+    <td class="<?= $venc?'color-danger':'' ?>"><?= $s['fecha_vencimiento']?date('d/m/Y',strtotime($s['fecha_vencimiento'])):'—' ?></td>
+    <td><span class="badge <?= $venc?'b-danger':($dv<=$sm?'b-warning':'b-success') ?>"><?= $venc?'Vencido':($dv<=$sm?'⚠️ Bajo':'✅ OK') ?></span></td>
+  </tr>
+  <?php endforeach; if(empty($semen_list)): ?><tr><td colspan="9" class="text-center text-muted" style="padding:32px">Sin registro de pajillas.</td></tr><?php endif; ?>
+  </tbody></table>
+</div>
+<?php endif; ?>
+
+<?php // ══ SANIDAD ══
+elseif ($sub === 'sanidad'): ?>
+<div class="flex items-center justify-between mb-3">
+  <div class="page-title">💉 Sanidad</div>
+  <a href="?p=ganado&sub=sanidad&action=nueva" class="btn btn-primary">＋ Registrar Tratamiento</a>
+</div>
+<?php if($action==='nueva'): ?>
+<div class="card" style="max-width:640px">
+  <div class="sec-title mb-3">💉 Tratamiento / Enfermedad</div>
+  <form method="POST"><input type="hidden" name="action" value="save_tratamiento">
+    <div class="form-row"><div class="form-group"><label class="form-label required">Animal</label><select class="form-input" name="animal_id" required><option value="">—</option><?php foreach($animales as $a): ?><option value="<?= $a['id'] ?>"><?= clean($a['nombre']??$a['numero_arete']) ?></option><?php endforeach; ?></select></div><div class="form-group"><label class="form-label">Veterinario</label><select class="form-input" name="veterinario_id"><option value="">—</option><?php foreach($vets as $v): ?><option value="<?= $v['id'] ?>"><?= clean($v['nombre']) ?></option><?php endforeach; ?></select></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label required">Fecha</label><input class="form-input" type="date" name="fecha" value="<?= date('Y-m-d') ?>" required></div><div class="form-group"><label class="form-label">Enfermedad / Diagnóstico</label><input class="form-input" name="enfermedad" placeholder="Ej: Mastitis, Brucelosis..."></div></div>
+    <div class="form-group"><label class="form-label">Descripción del diagnóstico</label><textarea class="form-input" name="diagnostico"></textarea></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Medicamento</label><input class="form-input" name="medicamento"></div><div class="form-group"><label class="form-label">Dosis</label><input class="form-input" name="dosis"></div></div>
+    <div class="form-row"><div class="form-group"><label class="form-label">Duración (días)</label><input class="form-input" type="number" name="duracion_dias"></div><div class="form-group"><label class="form-label">Costo (S/.)</label><input class="form-input" type="number" step="0.01" name="costo"></div></div>
+    <div class="form-group"><label class="form-label">Tratamiento indicado</label><textarea class="form-input" name="tratamiento"></textarea></div>
+    <div class="form-group"><label class="form-label">Observaciones</label><textarea class="form-input" name="observaciones"></textarea></div>
+    <div class="flex gap-2"><button type="submit" class="btn btn-primary">💾 Guardar</button><a href="?p=ganado&sub=sanidad" class="btn btn-ghost">Cancelar</a></div>
+  </form>
+</div>
+<?php else:
+  $tratamientos_l=[]; try{$tratamientos_l=$db->query("SELECT t.*,a.nombre as animal,a.numero_arete,u.nombre as vet FROM gv_tratamientos t JOIN gv_animales a ON a.id=t.animal_id LEFT JOIN usuarios u ON u.id=t.veterinario_id ORDER BY t.fecha DESC LIMIT 40")->fetchAll();}catch(Exception $e){}
+?>
+<?php if(isset($_POST['action'])&&$_POST['action']==='save_tratamiento'):
+  $at=(int)$_POST['animal_id'];$fields2=['animal_id','fecha','enfermedad','diagnostico','tratamiento','medicamento','dosis','duracion_dias','veterinario_id','costo','observaciones'];
+  $dt=[]; foreach($fields2 as $f) $dt[$f]=trim($_POST[$f]??'')?:null;
+  try{$cols2=implode(',',$fields2);$pls2=implode(',',array_map(fn($f)=>":$f",$fields2));$db->prepare("INSERT INTO gv_tratamientos ($cols2,estado) VALUES ($pls2,'activo')")->execute($dt);}catch(Exception $e){}
+  if($at) $db->prepare("UPDATE gv_animales SET estado='cuarentena' WHERE id=?")->execute([$at]);
+endif; ?>
+<div class="card" style="padding:0">
+  <table class="vtable"><thead><tr><th>Fecha</th><th>Animal</th><th>Enfermedad</th><th>Medicamento</th><th>Duración</th><th>Estado</th><th>Veterinario</th></tr></thead>
+  <tbody>
+  <?php foreach($tratamientos_l as $t): ?>
+  <tr><td><?= date('d/m/Y',strtotime($t['fecha'])) ?></td><td class="td-main"><?= clean($t['animal']??$t['numero_arete']) ?></td><td><?= clean($t['enfermedad']??'—') ?></td><td class="text-muted"><?= clean($t['medicamento']??'—') ?><?= $t['dosis']?" — {$t['dosis']}":'' ?></td><td class="text-muted"><?= $t['duracion_dias']?$t['duracion_dias'].' días':'—' ?></td><td><span class="badge <?= $t['estado']==='activo'?'b-danger':($t['estado']==='finalizado'?'b-success':'b-warning') ?>"><?= ucfirst($t['estado']) ?></span></td><td class="text-muted"><?= clean($t['vet']??'—') ?></td></tr>
+  <?php endforeach; if(empty($tratamientos_l)): ?><tr><td colspan="7" class="text-center text-muted" style="padding:32px">Sin tratamientos registrados.</td></tr><?php endif; ?>
+  </tbody></table>
+</div>
+<?php endif; ?>
+<?php endif; ?>
+<?php endif; // sub tabs ?>
+
+</div><!-- .page -->
+<?php require_once __DIR__ . '/../includes/footer.php'; ?>

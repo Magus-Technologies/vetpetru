@@ -18,7 +18,8 @@ if ($__isLocal) {
     define('SUNAT_API_URL', 'http://api-sunat-laravel.test/api/v1');
 } else {
     // ════════ PRODUCCIÓN ════════
-    define('SUNAT_API_URL', 'http://84.247.162.204/api-sunat-laravel/api/v1');
+  define('SUNAT_API_URL', 'https://magus-qa.com/api-sunat-laravel/api/v1');
+
 }
 
 define('SUNAT_API_TIMEOUT', 60);

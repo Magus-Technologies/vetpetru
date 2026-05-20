@@ -35,7 +35,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'')==='save') {
             $dir = UPLOADS_PATH.'/logo/';
             if(!is_dir($dir)) mkdir($dir,0755,true);
             $ext = $mime==='image/png'?'png':($mime==='image/svg+xml'?'svg':($mime==='image/webp'?'webp':'jpg'));
-            $fname = 'logo.'.$ext;
+            // Borrar logos anteriores de cualquier extensión
+            foreach(['png','jpg','jpeg','webp','gif','svg'] as $e) {
+                $old = $dir.'logo.'.$e;
+                if(file_exists($old)) unlink($old);
+            }
+            $fname = 'logo_'.time().'.'.$ext; // timestamp evita cache del navegador
             if(move_uploaded_file($_FILES['logo_file']['tmp_name'],$dir.$fname)) {
                 $logo_path = 'logo/'.$fname;
                 $db->prepare("INSERT INTO configuracion (clave,valor) VALUES('logo_path',?) ON DUPLICATE KEY UPDATE valor=VALUES(valor)")->execute([$logo_path]);
@@ -44,12 +49,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action']??'')==='save') {
         }
     }
     $msg = 'success';
+    // Recargar config completa para que la preview use los datos actualizados
+    $cfg = $db->query("SELECT clave,valor FROM configuracion")->fetchAll(PDO::FETCH_KEY_PAIR);
 }
 
 // Helper get config
 function cfg(array $c, string $k, string $def=''): string { return $c[$k] ?? $def; }
 
-$logo_url = !empty($cfg['logo_path']) && file_exists(UPLOADS_PATH.'/'.$cfg['logo_path']) ? UPLOADS_URL.'/'.$cfg['logo_path'] : '';
+$logo_url = '';
+if (!empty($cfg['logo_path'])) {
+    $logo_abs = UPLOADS_PATH.'/'.$cfg['logo_path'];
+    if (file_exists($logo_abs)) {
+        $logo_url = UPLOADS_URL.'/'.$cfg['logo_path'].'?v='.filemtime($logo_abs);
+    }
+}
 ?>
 
 <?php if($msg==='success'): ?><div class="alert alert-success mb-2">✅ Plantilla guardada correctamente.</div><?php endif; ?>
@@ -175,107 +188,155 @@ $logo_url = !empty($cfg['logo_path']) && file_exists(UPLOADS_PATH.'/'.$cfg['logo
       <button class="btn btn-sm flex-1" id="prev-a4" onclick="setPrevFormat('a4')" style="background:var(--teal);color:#fff;border-color:var(--teal)">A4</button>
       <button class="btn btn-sm flex-1" id="prev-voucher" onclick="setPrevFormat('voucher')">Voucher 80mm</button>
     </div>
-    <!-- MINI PREVIEW EMBEBIDA — no depende de iframe externo -->
-    <div id="preview-container" style="background:#fff;border:1px solid #ddd;border-radius:8px;overflow:auto;max-height:560px;padding:12px;font-size:11px;font-family:Arial,sans-serif">
+    <!-- MINI PREVIEW EMBEBIDA -->
+    <div id="preview-container" style="background:#f8f8f8;border:1px solid #ddd;border-radius:8px;overflow:auto;max-height:580px;padding:10px">
       <?php
-      // Mini render sincrono de la plantilla actual (sin iframe)
-      $p_nombre   = htmlspecialchars(cfg($cfg,'nombre_clinica','VetPro'));
-      $p_ruc      = htmlspecialchars(cfg($cfg,'ruc_clinica','20123456789'));
-      $p_dir      = htmlspecialchars(cfg($cfg,'direccion_clinica','Av. Principal 234'));
-      $p_tel      = htmlspecialchars(cfg($cfg,'telefono_clinica','01-444-5678'));
-      $p_email    = htmlspecialchars(cfg($cfg,'email_clinica','info@vetpro.pe'));
-      $p_cab      = cfg($cfg,'plantilla_cabecera','');
-      $p_cab_on   = cfg($cfg,'plantilla_cabecera_activo','1');
-      $p_inf      = cfg($cfg,'plantilla_inferior','');
-      $p_inf_on   = cfg($cfg,'plantilla_inferior_activo','1');
-      $p_des      = cfg($cfg,'plantilla_despedida','¡Gracias por su preferencia!');
-      $p_des_on   = cfg($cfg,'plantilla_despedida_activo','1');
-      $p_ctas     = cfg($cfg,'plantilla_cuentas_bancarias','');
-      $p_logo_on  = cfg($cfg,'comprobante_mostrar_logo','1');
-      $p_qr_on    = cfg($cfg,'comprobante_mostrar_qr','1');
+      $p_nombre  = htmlspecialchars(cfg($cfg,'nombre_clinica','VetPro'));
+      $p_ruc     = htmlspecialchars(cfg($cfg,'ruc_clinica','20123456789'));
+      $p_dir     = htmlspecialchars(cfg($cfg,'direccion_clinica','Av. Principal 234'));
+      $p_tel     = htmlspecialchars(cfg($cfg,'telefono_clinica','01-444-5678'));
+      $p_email   = htmlspecialchars(cfg($cfg,'email_clinica','info@vetpro.pe'));
+      $p_cab     = cfg($cfg,'plantilla_cabecera','');
+      $p_cab_on  = cfg($cfg,'plantilla_cabecera_activo','1');
+      $p_inf     = cfg($cfg,'plantilla_inferior','');
+      $p_inf_on  = cfg($cfg,'plantilla_inferior_activo','1');
+      $p_des     = cfg($cfg,'plantilla_despedida','¡Gracias por su preferencia!');
+      $p_des_on  = cfg($cfg,'plantilla_despedida_activo','1');
+      $p_ctas    = cfg($cfg,'plantilla_cuentas_bancarias','');
+      $p_logo_on = cfg($cfg,'comprobante_mostrar_logo','1');
+      $p_qr_on   = cfg($cfg,'comprobante_mostrar_qr','1');
       ?>
+
+      <!-- ═══ A4 PREVIEW ═══ -->
       <div id="prev-a4-content">
-        <!-- A4 MINI PREVIEW -->
-        <div style="border:1px solid #aaa;padding:10px;border-radius:4px">
-          <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;border-bottom:1.5px solid #000;padding-bottom:8px;gap:8px">
-            <div style="flex:1">
-              <?php if($p_logo_on && $logo_url): ?><img src="<?= $logo_url ?>" style="max-height:30px;max-width:80px;object-fit:contain;display:block;margin-bottom:4px"><?php endif; ?>
-              <?php if($p_cab_on && $p_cab): ?><div style="color:#cc0000;font-size:9px;font-weight:bold"><?= nl2br($p_cab) ?></div><?php else: ?>
-              <div style="font-weight:bold;font-size:10px"><?= $p_nombre ?></div>
-              <div style="font-size:8px;color:#555;line-height:1.5"><?= $p_dir ?><br>Tel: <?= $p_tel ?><br><?= $p_email ?></div>
+        <div style="background:#fff;border:1px solid #ccc;border-radius:4px;padding:14px;font-family:Arial,sans-serif;font-size:11px;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+
+          <!-- Cabecera: logo+empresa | tipo comprobante -->
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;border-bottom:2px solid #111;padding-bottom:8px;margin-bottom:8px;gap:8px">
+            <!-- Izquierda: logo y empresa -->
+            <div style="flex:1;min-width:0">
+              <?php if($p_logo_on && $logo_url): ?>
+              <img src="<?= $logo_url ?>" style="max-height:36px;max-width:100px;object-fit:contain;display:block;margin-bottom:4px">
+              <?php endif; ?>
+              <div style="font-weight:800;font-size:12px;color:#111;line-height:1.2"><?= $p_nombre ?></div>
+              <div style="font-size:9px;color:#444;line-height:1.6;margin-top:2px">
+                <?= $p_dir ?><br>
+                Tel: <?= $p_tel ?><?= $p_email?' &nbsp;·&nbsp; '.$p_email:'' ?>
+              </div>
+              <?php if($p_cab_on && $p_cab): ?>
+              <div style="margin-top:4px;font-size:9px;color:#cc0000;font-weight:600"><?= nl2br(htmlspecialchars($p_cab)) ?></div>
               <?php endif; ?>
             </div>
-            <div style="border:1.5px solid #000;text-align:center;min-width:110px">
-              <div style="font-size:7px;font-weight:bold;padding:2px 6px">R.U.C. <?= $p_ruc ?></div>
-              <div style="background:#f59e0b;color:#fff;font-size:8px;font-weight:bold;padding:3px 6px">BOLETA DE VENTA</div>
-              <div style="font-size:9px;font-weight:bold;padding:3px 6px">B001-000111</div>
+            <!-- Derecha: tipo comprobante -->
+            <div style="border:2px solid #111;border-radius:3px;min-width:120px;text-align:center;overflow:hidden;flex-shrink:0">
+              <div style="font-size:8px;font-weight:700;padding:3px 6px;border-bottom:1px solid #111">R.U.C. <?= $p_ruc ?></div>
+              <div style="background:#f59e0b;color:#fff;font-size:8px;font-weight:700;padding:4px 6px">BOLETA DE VENTA</div>
+              <div style="font-size:10px;font-weight:800;padding:4px 6px">B001-000111</div>
             </div>
           </div>
-          <div style="font-weight:bold;font-size:9px;margin-bottom:2px"><?= $p_nombre ?></div>
-          <div style="font-size:7px;color:#555;margin-bottom:6px"><?= $p_dir ?> · Tel: <?= $p_tel ?></div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #aaa;margin-bottom:6px;font-size:7.5px">
-            <div style="padding:4px 5px;border-right:1px solid #aaa">
+
+          <!-- Datos del cliente -->
+          <div style="display:grid;grid-template-columns:1fr 1fr;border:1px solid #ccc;margin-bottom:8px;font-size:8.5px">
+            <div style="padding:5px 7px;border-right:1px solid #ccc">
               <div><b>CLIENTE:</b> EJEMPLO CLIENTE</div>
               <div><b>DNI:</b> 12345678</div>
-              <div><b>DIRECCIÓN:</b> -</div>
+              <div><b>DIRECCIÓN:</b> —</div>
             </div>
-            <div style="padding:4px 5px">
+            <div style="padding:5px 7px">
               <div><b>FECHA:</b> <?= date('d/m/Y') ?></div>
               <div><b>MONEDA:</b> SOLES</div>
               <div><b>MÉTODO:</b> EFECTIVO</div>
             </div>
           </div>
-          <table style="width:100%;border-collapse:collapse;font-size:7px;margin-bottom:6px">
-            <thead><tr style="background:#e5e7eb"><?php foreach(['N°','CANT.','UNID.','CÓDIGO','DESCRIPCIÓN','V.UNIT.','IGV.','P.UNIT.','TOTAL'] as $h): ?><th style="border:1px solid #aaa;padding:2px 3px"><?= $h ?></th><?php endforeach; ?></tr></thead>
+
+          <!-- Tabla items -->
+          <table style="width:100%;border-collapse:collapse;font-size:8px;margin-bottom:6px">
+            <thead>
+              <tr style="background:#f3f4f6">
+                <?php foreach(['N°','CANT.','UNID.','CÓDIGO','DESCRIPCIÓN','V.UNIT.','IGV','P.UNIT.','TOTAL'] as $h): ?>
+                <th style="border:1px solid #bbb;padding:3px 4px;font-weight:700;font-size:7.5px"><?= $h ?></th>
+                <?php endforeach; ?>
+              </tr>
+            </thead>
             <tbody>
-              <tr><?php foreach(['1','1.000','NIU','-','Consulta general','18.64','3.36','22.00','22.00'] as $td): ?><td style="border:1px solid #aaa;padding:2px 3px;text-align:center"><?= $td ?></td><?php endforeach; ?></tr>
+              <tr>
+                <?php foreach(['1','1.000','NIU','—','Consulta veterinaria general','18.64','3.36','22.00','22.00'] as $td): ?>
+                <td style="border:1px solid #bbb;padding:3px 4px;text-align:center"><?= $td ?></td>
+                <?php endforeach; ?>
+              </tr>
             </tbody>
           </table>
-          <div style="font-weight:bold;font-size:7.5px;border:1px solid #aaa;padding:3px;text-align:center;margin-bottom:4px">SON: VEINTIDOS CON 00/100 SOLES</div>
-          <div style="display:flex;gap:6px">
-            <?php if($p_ctas): ?><div style="flex:1;font-size:7px;line-height:1.5;color:#333"><?= nl2br(htmlspecialchars($p_ctas)) ?></div><?php else: ?><div style="flex:1;font-size:7px;color:#aaa">[Cuentas bancarias aquí]</div><?php endif; ?>
-            <table style="font-size:7.5px;border-collapse:collapse;min-width:90px">
-              <tr><td style="border:1px solid #aaa;padding:1px 3px">OP. GRAVADAS: S/</td><td style="border:1px solid #aaa;padding:1px 3px;text-align:right">18.64</td></tr>
-              <tr><td style="border:1px solid #aaa;padding:1px 3px">IGV 18.0%: S/</td><td style="border:1px solid #aaa;padding:1px 3px;text-align:right">3.36</td></tr>
-              <tr style="font-weight:bold;background:#f0f0f0"><td style="border:1px solid #aaa;padding:1px 3px">TOTAL: S/</td><td style="border:1px solid #aaa;padding:1px 3px;text-align:right">22.00</td></tr>
+
+          <!-- Son + totales -->
+          <div style="font-weight:700;font-size:8px;border:1px solid #bbb;padding:4px;text-align:center;margin-bottom:6px;background:#fafafa">
+            SON: VEINTIDÓS CON 00/100 SOLES
+          </div>
+          <div style="display:flex;gap:8px;align-items:flex-start">
+            <!-- Cuentas bancarias -->
+            <div style="flex:1">
+              <?php if($p_ctas): ?>
+              <div style="font-size:7.5px;line-height:1.6;color:#333"><?= nl2br(htmlspecialchars($p_ctas)) ?></div>
+              <?php else: ?>
+              <div style="font-size:7.5px;color:#bbb;font-style:italic">[Cuentas bancarias]</div>
+              <?php endif; ?>
+            </div>
+            <!-- Totales -->
+            <table style="font-size:8px;border-collapse:collapse;min-width:110px">
+              <tr><td style="border:1px solid #bbb;padding:2px 5px">OP. GRAVADAS S/</td><td style="border:1px solid #bbb;padding:2px 5px;text-align:right;font-weight:600">18.64</td></tr>
+              <tr><td style="border:1px solid #bbb;padding:2px 5px">IGV 18%: S/</td><td style="border:1px solid #bbb;padding:2px 5px;text-align:right;font-weight:600">3.36</td></tr>
+              <tr style="background:#f0fdf4"><td style="border:1px solid #bbb;padding:2px 5px;font-weight:700">TOTAL: S/</td><td style="border:1px solid #bbb;padding:2px 5px;text-align:right;font-weight:800;color:#065f46">22.00</td></tr>
             </table>
           </div>
-          <?php if($p_des_on && $p_des): ?><div style="text-align:center;font-size:7.5px;font-weight:bold;border-top:1px dashed #aaa;border-bottom:1px dashed #aaa;padding:2px;margin:4px 0"><?= htmlspecialchars(strtoupper($p_des)) ?></div><?php endif; ?>
-          <?php if($p_qr_on): ?><div style="text-align:center;margin:4px 0"><img src="https://api.qrserver.com/v1/create-qr-code/?size=40x40&data=VetPro" style="width:32px;height:32px"></div><?php endif; ?>
-          <?php if($p_inf_on && $p_inf): ?><div style="text-align:center;font-size:7px;color:#555"><?= nl2br(htmlspecialchars($p_inf)) ?></div><?php endif; ?>
+
+          <!-- Despedida -->
+          <?php if($p_des_on && $p_des): ?>
+          <div style="text-align:center;font-size:8px;font-weight:700;border-top:1px dashed #bbb;border-bottom:1px dashed #bbb;padding:4px;margin:6px 0"><?= htmlspecialchars(strtoupper($p_des)) ?></div>
+          <?php endif; ?>
+
+          <!-- QR -->
+          <?php if($p_qr_on): ?>
+          <div style="text-align:center;margin:4px 0">
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=50x50&data=VetPro-B001-000111" style="width:36px;height:36px">
+          </div>
+          <?php endif; ?>
+
+          <!-- Mensaje inferior -->
+          <?php if($p_inf_on && $p_inf): ?>
+          <div style="text-align:center;font-size:7.5px;color:#555;margin-top:3px"><?= nl2br(htmlspecialchars($p_inf)) ?></div>
+          <?php endif; ?>
         </div>
       </div>
 
+      <!-- ═══ VOUCHER PREVIEW ═══ -->
       <div id="prev-voucher-content" style="display:none">
-        <!-- VOUCHER MINI PREVIEW -->
-        <div style="max-width:200px;margin:0 auto;border:1px solid #aaa;padding:8px;font-family:'Courier New',monospace;font-size:8px">
-          <?php if($p_logo_on && $logo_url): ?><div style="text-align:center;margin-bottom:4px"><img src="<?= $logo_url ?>" style="max-height:24px;max-width:120px;object-fit:contain"></div><?php endif; ?>
-          <div style="text-align:center;font-weight:bold;font-size:9px"><?= $p_nombre ?></div>
-          <div style="text-align:center">R.U.C. <?= $p_ruc ?></div>
-          <div style="text-align:center;font-size:7px"><?= $p_dir ?></div>
-          <?php if($p_cab_on && $p_cab): ?><div style="text-align:center;font-size:7px"><?= nl2br($p_cab) ?></div><?php endif; ?>
-          <div style="border-top:1px dashed #000;margin:3px 0"></div>
-          <div style="text-align:center;font-weight:bold">BOLETA DE VENTA</div>
+        <div style="max-width:210px;margin:0 auto;background:#fff;border:1px solid #ccc;padding:8px;font-family:'Courier New',monospace;font-size:8px;box-shadow:0 2px 8px rgba(0,0,0,.08)">
+          <?php if($p_logo_on && $logo_url): ?>
+          <div style="text-align:center;margin-bottom:5px"><img src="<?= $logo_url ?>" style="max-height:22px;max-width:130px;object-fit:contain"></div>
+          <?php endif; ?>
+          <div style="text-align:center;font-weight:bold;font-size:9.5px"><?= $p_nombre ?></div>
+          <div style="text-align:center;font-size:7.5px">R.U.C. <?= $p_ruc ?></div>
+          <div style="text-align:center;font-size:7px;line-height:1.4"><?= $p_dir ?></div>
+          <div style="text-align:center;font-size:7px">Tel: <?= $p_tel ?></div>
+          <?php if($p_cab_on && $p_cab): ?><div style="text-align:center;font-size:7px;color:#c00"><?= nl2br(htmlspecialchars($p_cab)) ?></div><?php endif; ?>
+          <div style="border-top:1px dashed #000;margin:4px 0"></div>
+          <div style="text-align:center;font-weight:bold;font-size:8.5px">BOLETA DE VENTA</div>
           <div style="text-align:center;font-weight:bold;font-size:10px">B001-000111</div>
-          <div style="border-top:1px dashed #000;margin:3px 0"></div>
+          <div style="border-top:1px dashed #000;margin:4px 0"></div>
           <div><b>FECHA:</b> <?= date('d/m/Y') ?></div>
           <div><b>CLIENTE:</b> EJEMPLO CLIENTE</div>
-          <div style="border-top:1px dashed #000;margin:3px 0"></div>
-          <div style="display:flex;justify-content:space-between"><span>Consulta</span><span>22.00</span></div>
+          <div style="border-top:1px dashed #000;margin:4px 0"></div>
+          <div style="display:flex;justify-content:space-between"><span>Consulta veterinaria</span><span>22.00</span></div>
+          <div style="border-top:1px solid #000;margin:4px 0"></div>
+          <div style="display:flex;justify-content:space-between"><span>SUBTOTAL:</span><span>18.64</span></div>
+          <div style="display:flex;justify-content:space-between"><span>IGV (18%):</span><span>3.36</span></div>
           <div style="border-top:1px solid #000;margin:3px 0"></div>
-          <div style="display:flex;justify-content:space-between"><span>SUBTOTAL:</span></div>
-          <div style="text-align:right">PEN 18.64</div>
-          <div style="display:flex;justify-content:space-between"><span>IGV (18%):</span></div>
-          <div style="text-align:right">PEN 3.36</div>
+          <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:10px"><span>TOTAL:</span><span>22.00</span></div>
           <div style="border-top:1px solid #000;margin:3px 0"></div>
-          <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:11px"><span>TOTAL:</span><span>PEN 22.00</span></div>
-          <div style="border-top:1px solid #000;margin:3px 0"></div>
-          <div><b>PAGO:</b> CONTADO</div>
           <div><b>MÉTODO:</b> EFECTIVO</div>
-          <?php if($p_ctas): ?><div style="border-top:1px dashed #000;margin:3px 0"></div><div style="font-size:7px"><?= nl2br(htmlspecialchars($p_ctas)) ?></div><?php endif; ?>
-          <?php if($p_qr_on): ?><div style="text-align:center;margin:4px 0"><img src="https://api.qrserver.com/v1/create-qr-code/?size=50x50&data=VetPro" style="width:42px;height:42px"></div><?php endif; ?>
-          <?php if($p_des_on && $p_des): ?><div style="text-align:center;font-weight:bold;border-top:1px dashed #000;padding-top:3px"><?= htmlspecialchars($p_des) ?></div><?php endif; ?>
-          <?php if($p_inf_on && $p_inf): ?><div style="text-align:center;font-size:7px;border-top:1px dashed #000;padding-top:3px"><?= nl2br(htmlspecialchars($p_inf)) ?></div><?php endif; ?>
+          <?php if($p_ctas): ?><div style="border-top:1px dashed #000;margin:4px 0"></div><div style="font-size:7px;line-height:1.5"><?= nl2br(htmlspecialchars($p_ctas)) ?></div><?php endif; ?>
+          <?php if($p_qr_on): ?><div style="text-align:center;margin:5px 0"><img src="https://api.qrserver.com/v1/create-qr-code/?size=50x50&data=VetPro" style="width:44px;height:44px"></div><?php endif; ?>
+          <?php if($p_des_on && $p_des): ?><div style="text-align:center;font-weight:bold;border-top:1px dashed #000;padding-top:3px;margin-top:4px"><?= htmlspecialchars(strtoupper($p_des)) ?></div><?php endif; ?>
+          <?php if($p_inf_on && $p_inf): ?><div style="text-align:center;font-size:7px;border-top:1px dashed #000;padding-top:3px;margin-top:4px"><?= nl2br(htmlspecialchars($p_inf)) ?></div><?php endif; ?>
         </div>
       </div>
     </div>

@@ -79,7 +79,6 @@ input, select, textarea, button { font-family:inherit; }
   width:var(--sidebar-w); background:var(--sidebar); height:100vh;
   display:flex; flex-direction:column; flex-shrink:0; overflow-y:auto;
   border-right:1px solid rgba(255,255,255,.04);
-  position:fixed; top:0; left:0; z-index:200;
 }
 .sidebar-logo {
   padding:20px 18px 16px; border-bottom:1px solid rgba(255,255,255,.06);
@@ -152,8 +151,7 @@ input, select, textarea, button { font-family:inherit; }
 /* ══════════════════════════════════════════
    MAIN LAYOUT
 ══════════════════════════════════════════ */
-.main { margin-left:var(--sidebar-w); flex:1; overflow:hidden; display:flex; flex-direction:column; }
-body { overflow:hidden; }
+.main { flex:1; overflow:hidden; display:flex; flex-direction:column; }
 
 .topbar {
   background:var(--bg2); border-bottom:1px solid var(--border);
@@ -604,19 +602,36 @@ textarea.form-input { resize:vertical; min-height:80px; line-height:1.6; }
 .pf-success { background:var(--success); }
 
 /* ══════════════════════════════════════════
-   RESPONSIVE — TABLET (≤1024px)
+   RESPONSIVE
 ══════════════════════════════════════════ */
 @media (max-width:1024px) {
   .g4 { grid-template-columns:repeat(2,1fr); }
   .g5,.g6 { grid-template-columns:repeat(3,1fr); }
+}
+@media (max-width:900px) {
+  .g3 { grid-template-columns:repeat(2,1fr); }
+  body { overflow:auto; }
+  .main { overflow:auto; }
+  .sidebar { width:64px; }
+  .sidebar .logo-text,.sidebar .logo-sub,.sidebar .nav-item > span:last-child,
+  .user-name,.user-role,.sidebar-section { display:none; }
+  .nav-item { justify-content:center; padding:12px; margin:1px 4px; }
+  .sidebar-footer .user-info-wrap { justify-content:center; }
+  .sidebar-footer .avatar { margin:0; }
+}
+@media (max-width:600px) {
+  .g4,.g3,.g2 { grid-template-columns:1fr; }
+  .form-row,.form-row-3 { grid-template-columns:1fr; }
+  .content { padding:14px; }
+  .kanban { grid-template-columns:1fr; }
 }
 
 /* ══════════════════════════════════════════
    PRINT
 ══════════════════════════════════════════ */
 @media print {
-  .sidebar,.topbar,.btn,.mob-bottom-nav { display:none !important; }
+  .sidebar,.topbar,.btn { display:none !important; }
   .content { padding:0; }
-  body { overflow:visible; background:#fff; height:auto; }
-  .main { overflow:visible; height:auto; padding-bottom:0; margin-left:0; }
+  body { overflow:visible; background:#fff; }
+  .main { overflow:visible; }
 }

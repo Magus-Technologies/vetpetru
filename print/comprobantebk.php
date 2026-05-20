@@ -35,13 +35,7 @@ $items->execute([$id]); $items = $items->fetchAll();
 $cfg = $db->query("SELECT clave,valor FROM configuracion")->fetchAll(PDO::FETCH_KEY_PAIR);
 function cfg(array $c, string $k, string $def=''): string { return $c[$k] ?? $def; }
 
-$logo_url = '';
-if (!empty($cfg['logo_path'])) {
-    $logo_abs = UPLOADS_PATH.'/'.$cfg['logo_path'];
-    if (file_exists($logo_abs)) {
-        $logo_url = UPLOADS_URL.'/'.$cfg['logo_path'].'?v='.filemtime($logo_abs);
-    }
-}
+$logo_url = !empty($cfg['logo_path']) && file_exists(UPLOADS_PATH.'/'.$cfg['logo_path']) ? UPLOADS_URL.'/'.$cfg['logo_path'] : '';
 
 // Tipo de comprobante labels
 $tipo_label = ['boleta'=>'BOLETA DE VENTA','factura'=>'FACTURA ELECTRÓNICA','ticket'=>'NOTA DE VENTA'];
