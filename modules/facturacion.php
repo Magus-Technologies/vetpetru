@@ -157,7 +157,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 // ── Generación de XML ANTES del commit ──
-                // Si falla SUNAT para factura/boleta, se hace ROLLBACK y no se crea la venta.
+                // En PRODUCCIÓN: si falla SUNAT se hace rollback (venta no se guarda).
+                // En DESARROLLO: SUNAT no es bloqueante — la venta se guarda igual
+                //                y el XML se puede regenerar/enviar después.
                 $sunat_xml_generado = null;
                 if (in_array($tipo, ['factura', 'boleta'], true)) {
                     $sunat_cfg = __DIR__ . '/../includes/config_sunat.php';
@@ -168,13 +170,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $sunat = new SunatService($db);
                         $resul = $sunat->generarXml($venta_id);
                         if (!$resul['ok']) {
-                            // XML falló — rollback total, no se registra nada
-                            $db->rollBack();
-                            $_SESSION['flash_error'] = 'SUNAT_ERROR: ' . $resul['mensaje'];
-                            header('Location: '.BASE_URL.'/index.php?p=facturacion&action=nueva&msg=sunat_fail');
-                            exit;
+                            if (APP_ENV === 'development') {
+                                // Local: aviso pero no bloquea — venta se guarda sin XML
+                                $_SESSION['flash_error'] = '⚠️ SUNAT (local): ' . $resul['mensaje'];
+                            } else {
+                                // Producción: rollback total, no se registra nada
+                                $db->rollBack();
+                                $_SESSION['flash_error'] = 'SUNAT_ERROR: ' . $resul['mensaje'];
+                                header('Location: '.BASE_URL.'/index.php?p=facturacion&action=nueva&msg=sunat_fail');
+                                exit;
+                            }
+                        } else {
+                            $sunat_xml_generado = $resul['xml'] ?? null;
                         }
-                        $sunat_xml_generado = $resul['xml'] ?? null;
                     }
                 }
 
@@ -1599,25 +1607,48 @@ document.getElementById('venta-form')?.addEventListener('submit', function(e) {
     return;
   }
   var valid = false;
-  rows.forEach(row => {
+  rows.forEach(function(row) {
     var p = parseFloat(row.querySelector('[name="item_precio[]"]')?.value || 0);
     if (p > 0) valid = true;
   });
-if (pagosUI.length === 0) {
-        alert('Agrega al menos un método de pago.');
-        return;
-    }
-    var sumPagos = pagosUI.reduce(function(s, p) { return s + p.monto; }, 0);
-    var _txt = document.getElementById('tot-total').textContent;
-    var totalVenta = parseFloat((_txt.match(/\d[\d.,-]*/) || ['0'])[0].replace(',', '.')) || 0;
-    if (Math.abs(sumPagos - totalVenta) > 0.02) {
-        alert('La suma de los pagos (S/. ' + sumPagos.toFixed(2) + ') no coincide con el total (S/. ' + totalVenta.toFixed(2) + ').');
-        return;
-    }
-    if (!valid) {
-        e.preventDefault();
-        alert('Todos los ítems deben tener un precio mayor a 0.');
-    }
+  if (!valid) {
+    e.preventDefault();
+    alert('Todos los ítems deben tener un precio mayor a 0.');
+    return;
+  }
+
+  // ── Auto-agregar pago pendiente si el usuario no presionó + ──
+  var inpMonto    = document.getElementById('inp-monto-metodo');
+  var _txtPre     = document.getElementById('tot-total').textContent;
+  var totalPre    = parseFloat((_txtPre.match(/\d[\d.,-]*/) || ['0'])[0].replace(',', '.')) || 0;
+  var sumActual   = pagosUI.reduce(function(s, p) { return s + p.monto; }, 0);
+  var falta       = Math.round((totalPre - sumActual) * 100) / 100;
+  var pendingMetodo = document.getElementById('sel-nuevo-metodo')?.value;
+  var pendingMonto  = parseFloat(inpMonto?.value || 0);
+
+  if (falta > 0.01 && pendingMetodo) {
+    // Si ingresó un monto válido pero no presionó +, usarlo
+    // Si dejó el monto vacío (0), auto-completar con lo que falta
+    var montoFinal = pendingMonto > 0.01 ? Math.min(pendingMonto, falta) : falta;
+    pagosUI.push({ metodo: pendingMetodo, monto: Math.round(montoFinal * 100) / 100 });
+    renderPagosUI();
+    if (inpMonto) inpMonto.value = '';
+  }
+
+  // ── Validar suma de pagos ──
+  if (pagosUI.length === 0) {
+    e.preventDefault();
+    alert('Agrega al menos un método de pago.');
+    return;
+  }
+  var sumPagos = pagosUI.reduce(function(s, p) { return s + p.monto; }, 0);
+  var _txt = document.getElementById('tot-total').textContent;
+  var totalVenta = parseFloat((_txt.match(/\d[\d.,-]*/) || ['0'])[0].replace(',', '.')) || 0;
+  if (Math.abs(sumPagos - totalVenta) > 0.02) {
+    e.preventDefault();
+    alert('La suma de los pagos (S/. ' + sumPagos.toFixed(2) + ') no coincide con el total (S/. ' + totalVenta.toFixed(2) + ').\nFalta: S/. ' + Math.abs(totalVenta - sumPagos).toFixed(2));
+    return;
+  }
 });
 
 // ── MULTI-PAYMENT METHODS ──

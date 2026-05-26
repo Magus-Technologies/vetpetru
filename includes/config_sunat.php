@@ -53,13 +53,20 @@ function loadSunatConfigFromDB(?PDO $db = null): array {
 $__cfg = loadSunatConfigFromDB();
 
 // ─── Modo: beta | produccion ──────────────────────────────────
-$__modo = $__cfg['sunat_modo'] ?? 'beta';
-define('SUNAT_ENDPOINT', $__modo);
-
-// ─── Credenciales SOL ───────────────────────────────────────────
-define('SUNAT_RUC',         $__cfg['clinica_ruc'] ?? '20000000001');
-define('SUNAT_USUARIO_SOL', $__cfg['sunat_usuario_sol'] ?? 'MODDATOS');
-define('SUNAT_CLAVE_SOL',   $__cfg['sunat_clave_sol'] ?? 'MODDATOS');
+// En entorno LOCAL siempre forzamos beta + credenciales de prueba SUNAT,
+// ignorando los valores de producción que pueda traer la BD importada.
+if ($__isLocal) {
+    define('SUNAT_ENDPOINT',    'beta');
+    define('SUNAT_RUC',         '20000000001');
+    define('SUNAT_USUARIO_SOL', 'MODDATOS');
+    define('SUNAT_CLAVE_SOL',   'MODDATOS');
+} else {
+    $__modo = $__cfg['sunat_modo'] ?? 'produccion';
+    define('SUNAT_ENDPOINT',    $__modo);
+    define('SUNAT_RUC',         $__cfg['clinica_ruc']       ?? '20000000001');
+    define('SUNAT_USUARIO_SOL', $__cfg['sunat_usuario_sol'] ?? 'MODDATOS');
+    define('SUNAT_CLAVE_SOL',   $__cfg['sunat_clave_sol']   ?? 'MODDATOS');
+}
 
 // ─── Datos empresa emisora (desde configuracion BD o defaults) ─
 define('SUNAT_RAZON_SIAL',     $__cfg['clinica_nombre'] ?? 'EMPRESA DE PRUEBAS S.A.C.');

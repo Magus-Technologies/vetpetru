@@ -15,10 +15,10 @@ $__isLocal = (
 if ($__isLocal) {
     // ════════ LOCAL ════════
     define('DB_HOST', 'localhost');
-    define('DB_NAME', 'vetpro');
+    define('DB_NAME', 'vet_petru');
     define('DB_USER', 'root');
     define('DB_PASS', '');
-    define('BASE_URL', 'http://localhost/vetPro');
+    define('BASE_URL', 'http://localhost/vetpetru');
     define('APP_ENV',  'development');
     define('MIGRATIONS_TOKEN', 'dev_local_token_no_importa');
 } else {
