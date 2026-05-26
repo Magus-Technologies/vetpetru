@@ -16,6 +16,13 @@ try {
     )");
 } catch(Exception $e){}
 
+// Auto-crear columnas para firma y colegiatura del veterinario (idempotente)
+try {
+    $_ucols = $db->query("SHOW COLUMNS FROM `usuarios`")->fetchAll(PDO::FETCH_COLUMN);
+    if (!in_array('colegiatura', $_ucols)) $db->exec("ALTER TABLE `usuarios` ADD COLUMN `colegiatura` VARCHAR(50) DEFAULT NULL");
+    if (!in_array('firma', $_ucols))       $db->exec("ALTER TABLE `usuarios` ADD COLUMN `firma` VARCHAR(255) DEFAULT NULL");
+} catch(Exception $e){}
+
 $action = $_GET['action'] ?? 'list';
 $msg = '';
 
@@ -25,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($pa === 'save') {
         $id  = (int)($_POST['id'] ?? 0);
         $pw  = trim($_POST['password'] ?? '');
-        $fields = ['nombre','email','rol','especialidad','telefono','turno'];
+        $fields = ['nombre','email','rol','especialidad','telefono','turno','colegiatura'];
         $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '');
         $data['activo']  = isset($_POST['activo']) ? 1 : 0;
         // Sede principal (primera sede o la seleccionada)
@@ -60,6 +67,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             foreach ($sedes_sel as $sid) {
                 $sid = (int)$sid;
                 if ($sid) $db->prepare("INSERT IGNORE INTO usuario_sedes (usuario_id,sede_id) VALUES (?,?)")->execute([$id,$sid]);
+            }
+            // Subir firma del veterinario (opcional)
+            if (!empty($_FILES['firma']['tmp_name']) && $_FILES['firma']['error']===0) {
+                $mime = mime_content_type($_FILES['firma']['tmp_name']);
+                $exts = ['image/png'=>'png','image/jpeg'=>'jpg','image/webp'=>'webp'];
+                if (isset($exts[$mime])) {
+                    $dir = UPLOADS_PATH . '/firmas';
+                    if (!is_dir($dir)) @mkdir($dir, 0775, true);
+                    $fname = 'firma_'.$id.'_'.time().'.'.$exts[$mime];
+                    if (move_uploaded_file($_FILES['firma']['tmp_name'], $dir.'/'.$fname)) {
+                        $db->prepare("UPDATE usuarios SET firma=? WHERE id=?")->execute(['firmas/'.$fname, $id]);
+                    }
+                }
             }
             $msg = 'success'; $action = 'list';
         } catch(Exception $e) { $msg = 'error:'.$e->getMessage(); }
@@ -131,7 +151,7 @@ $rol_labels = ['admin'=>'Administrador','veterinario'=>'Veterinario','asistente'
     <div class="sec-title"><?= $action==='editar'?'Editar':'Nuevo'?> Personal</div>
     <a href="?p=personal" class="btn btn-ghost btn-sm">Volver</a>
   </div>
-  <form method="POST">
+  <form method="POST" enctype="multipart/form-data">
     <input type="hidden" name="action" value="save">
     <input type="hidden" name="id" value="<?= $editing['id']??'' ?>">
     <div class="form-row">
@@ -149,6 +169,27 @@ $rol_labels = ['admin'=>'Administrador','veterinario'=>'Veterinario','asistente'
     <div class="form-row">
       <div class="form-group"><label class="form-label">Telefono</label><input class="form-input" name="telefono" value="<?= clean($editing['telefono']??'') ?>"></div>
       <div class="form-group"><label class="form-label">Turno</label><input class="form-input" name="turno" value="<?= clean($editing['turno']??'') ?>" placeholder="Ej: L-V 8:00-17:00"></div>
+    </div>
+
+    <!-- COLEGIATURA Y FIRMA (para recetas médicas) -->
+    <div class="form-row">
+      <div class="form-group">
+        <label class="form-label">N° de colegiatura (CMVP)</label>
+        <input class="form-input" name="colegiatura" value="<?= clean($editing['colegiatura']??'') ?>" placeholder="Ej: 12345">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">Aparecerá en las recetas médicas firmadas por este profesional.</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Firma digital</label>
+        <?php $firma_actual = $editing['firma'] ?? ''; ?>
+        <?php if($firma_actual): ?>
+        <div style="margin-bottom:8px;padding:8px;background:#fff;border:1px solid var(--border);border-radius:8px;text-align:center">
+          <img src="<?= UPLOADS_URL.'/'.clean($firma_actual) ?>" alt="Firma actual" style="max-height:60px;max-width:200px;object-fit:contain">
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Firma actual</div>
+        </div>
+        <?php endif; ?>
+        <input class="form-input" type="file" name="firma" accept="image/png,image/jpeg,image/webp" style="cursor:pointer">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">PNG con fondo transparente recomendado. Se mostrará sobre la línea de firma en la receta.</div>
+      </div>
     </div>
 
     <!-- SEDES ASIGNADAS -->

@@ -71,7 +71,7 @@ if ($action==='delete' && isset($_GET['id'])) {
 
 $clientes_sel=$db->query("SELECT id,nombre,telefono FROM clientes WHERE activo=1 ORDER BY nombre")->fetchAll();
 $especie_icons=['perro'=>'🐕','gato'=>'🐈','conejo'=>'🐰','ave'=>'🐦','reptil'=>'🦎','roedor'=>'🐭','otro'=>'🐾'];
-$especie_labels=['perro'=>'Perino','gato'=>'Gato','conejo'=>'Conejo','ave'=>'Ave','reptil'=>'Reptil','roedor'=>'Roedor','otro'=>'Otro'];
+$especie_labels=['perro'=>'Perro','gato'=>'Gato','conejo'=>'Conejo','ave'=>'Ave','reptil'=>'Reptil','roedor'=>'Roedor','otro'=>'Otro'];
 
 // ── VER perfil completo de mascota (imagen 2) ──
 if ($action==='ver' && isset($_GET['id'])) {
@@ -118,19 +118,23 @@ if ($action==='ver' && isset($_GET['id'])) {
 .mas-photo-card { background:var(--bg2); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
 .mas-photo-wrap { width:100%; aspect-ratio:1; background:var(--bg3); display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; }
 .mas-photo-wrap img { width:100%; height:100%; object-fit:cover; }
-.mas-photo-emoji { font-size:80px; opacity:.6; }
+.mas-photo-emoji { font-size:80px; opacity:.7; }
 .mas-photo-badge { position:absolute; top:10px; right:10px; }
 .mas-info-card { background:var(--bg2); border:1px solid var(--border); border-radius:14px; padding:0; overflow:hidden; }
-.mas-ic-head { padding:14px 16px; border-bottom:1px solid var(--border); font-size:12px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; }
+.mas-ic-head { padding:13px 16px; border-bottom:1px solid var(--border); font-size:11px; font-weight:700; color:var(--text2); text-transform:uppercase; letter-spacing:.6px; display:flex; align-items:center; gap:7px; }
 .mas-ic-body { padding:14px 16px; }
 .mas-field { display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border); }
 .mas-field:last-child { border-bottom:none; }
 .mas-field-label { font-size:12px; color:var(--text3); font-weight:500; }
 .mas-field-val { font-size:12px; font-weight:600; color:var(--text); text-align:right; }
-.mas-tabs { display:flex; gap:2px; border-bottom:2px solid var(--border); margin-bottom:16px; overflow-x:auto; }
-.mas-tab { padding:9px 16px; border-radius:8px 8px 0 0; font-size:12px; font-weight:600; color:var(--text3); cursor:pointer; border:none; background:none; white-space:nowrap; transition:all .15s; margin-bottom:-2px; border-bottom:2px solid transparent; }
+.mas-tabs { display:flex; gap:6px; border-bottom:2px solid var(--border); margin-bottom:18px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+.mas-tabs::-webkit-scrollbar { display:none; }
+.mas-tab { padding:10px 18px; border-radius:8px 8px 0 0; font-size:13px; font-weight:600; color:var(--text3); cursor:pointer; border:none; background:none; white-space:nowrap; flex-shrink:0; transition:all .15s; margin-bottom:-2px; border-bottom:2px solid transparent; }
 .mas-tab.active { color:var(--primary); border-bottom-color:var(--primary); background:transparent; }
-.mas-tab:hover { color:var(--text2); }
+.mas-tab:hover { color:var(--text2); background:var(--bg3); }
+/* Título de sección con barra de color a la izquierda */
+.mas-sec-title { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:800; color:var(--text2); text-transform:uppercase; letter-spacing:.6px; margin-bottom:14px; }
+.mas-sec-title::before { content:''; width:3px; height:14px; border-radius:2px; background:var(--primary); flex-shrink:0; }
 .mas-tab-content { display:none; } .mas-tab-content.active { display:block; }
 .act-item { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
 .act-item:last-child { border-bottom:none; }
@@ -141,6 +145,24 @@ if ($action==='ver' && isset($_GET['id'])) {
 .resumen-med-stat:last-child { border-bottom:none; }
 .nota-card { background:#fefce8; border:1px solid #fde68a; border-radius:10px; padding:12px 14px; font-size:12px; color:#78350f; line-height:1.6; }
 @media(max-width:1100px) { .mas-profile { grid-template-columns:240px 1fr; } .mas-right { display:none; } }
+@media(max-width:768px) {
+  .mas-profile { grid-template-columns:1fr !important; gap:10px !important; }
+  .mas-right { display:block !important; overflow:visible !important; min-width:0 !important; }
+  .mas-left { gap:10px !important; }
+  .mas-quick-header { flex-wrap:wrap !important; gap:10px !important; padding:14px !important; }
+  .mas-banner-stats { gap:6px !important; }
+  .mas-banner-stats > div { padding:8px 4px !important; }
+  /* En móvil las 2 columnas del resumen se apilan: quitar divisor y padding lateral */
+  #tab-resumen .grid.g2 { gap:18px !important; }
+  #tab-resumen .grid.g2 > div { padding-left:0 !important; padding-right:0 !important; border-left:none !important; }
+  .mas-btns { width:100% !important; display:flex !important; gap:6px !important; }
+  .mas-btns a, .mas-btns button { flex:1 !important; justify-content:center !important; font-size:11px !important; padding:7px 4px !important; text-align:center !important; }
+  .mas-photo-wrap { height:180px !important; }
+  /* FIX TABS — scroll horizontal sin corte */
+  .mas-tabs { display:flex !important; flex-wrap:nowrap !important; overflow-x:scroll !important; -webkit-overflow-scrolling:touch !important; scrollbar-width:none !important; width:100% !important; box-sizing:border-box !important; }
+  .mas-tabs::-webkit-scrollbar { display:none !important; }
+  .mas-tab { flex-shrink:0 !important; white-space:nowrap !important; font-size:11px !important; padding:7px 10px !important; }
+}
 </style>
 
 <?php if($msg==='success'): ?><div class="alert alert-success mb-2"><span class="alert-icon">✅</span>Mascota actualizada correctamente.</div><?php endif; ?>
@@ -152,34 +174,47 @@ if ($action==='ver' && isset($_GET['id'])) {
   <span style="color:var(--text);font-weight:600"><?= clean($m['nombre']) ?></span>
 </div>
 
-<!-- HEADER RÁPIDO -->
-<div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:16px;display:flex;align-items:center;gap:16px">
-  <div style="width:52px;height:52px;border-radius:12px;overflow:hidden;flex-shrink:0;background:var(--bg3);display:flex;align-items:center;justify-content:center">
-    <?php if($foto_url): ?><img src="<?= $foto_url ?>" style="width:100%;height:100%;object-fit:cover"><?php else: ?><span style="font-size:26px"><?= $especie_icons[$m['especie']]??'🐾' ?></span><?php endif; ?>
+<!-- HEADER BANNER (Opción A) -->
+<?php
+$especie_color=['perro'=>'#10b981','gato'=>'#6366f1','conejo'=>'#f59e0b','ave'=>'#3b82f6','reptil'=>'#84cc16','roedor'=>'#f97316','otro'=>'#8b5cf6'];
+$ec=$especie_color[$m['especie']]??'#10b981';
+try{$n_hosp=$db->prepare("SELECT COUNT(*) FROM hospitalizaciones WHERE mascota_id=?");$n_hosp->execute([$m['id']]);$n_hosp=(int)$n_hosp->fetchColumn();}catch(Exception $e){$n_hosp=0;}
+?>
+<div class="mas-banner" style="background:<?= $ec ?>14;border:1px solid var(--border);border-bottom:3px solid <?= $ec ?>;border-radius:14px;margin-bottom:14px;overflow:hidden">
+  <div style="padding:16px 20px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+    <div style="width:64px;height:64px;border-radius:16px;overflow:hidden;flex-shrink:0;background:<?= $ec ?>25;display:flex;align-items:center;justify-content:center">
+      <?php if($foto_url): ?><img src="<?= $foto_url ?>" style="width:100%;height:100%;object-fit:cover"><?php else: ?><span style="font-size:34px"><?= $especie_icons[$m['especie']]??'🐾' ?></span><?php endif; ?>
+    </div>
+    <div style="flex:1;min-width:160px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:21px;font-weight:800;color:var(--text)"><?= clean($m['nombre']) ?></span>
+        <span style="font-size:16px;color:<?= $m['sexo']==='macho'?'#3b82f6':'#ec4899' ?>"><?= $m['sexo']==='macho'?'♂':'♀' ?></span>
+        <span class="badge <?= $m['estado']==='activo'?'b-success':'b-danger' ?>"><?= ucfirst($m['estado']) ?></span>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-top:3px">
+        <?= ucfirst($m['especie']) ?><?= $m['raza']?" · ".clean($m['raza']):'' ?><?= $edad?" · $edad":'' ?><?= $m['peso']?" · ".clean($m['peso'])." kg":'' ?>
+      </div>
+    </div>
+    <div class="mas-btns flex gap-2" style="position:relative">
+      <a href="<?= BASE_URL ?>/index.php?p=mascotas&action=editar&id=<?= $m['id'] ?>" class="btn btn-ghost btn-sm">✏️ Editar</a>
+      <a href="<?= BASE_URL ?>/index.php?p=historial&mascota_id=<?= $m['id'] ?>" class="btn btn-primary btn-sm">🏥 Historia Clínica</a>
+      <button class="btn btn-ghost btn-sm" id="btnMenu<?= $m['id'] ?>"
+              onclick="toggleMasMenu(<?= $m['id'] ?>, event)" style="padding:8px 12px">⋯</button>
+      <div id="dropMenu<?= $m['id'] ?>"
+           style="display:none;position:absolute;top:100%;right:0;margin-top:4px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.12);z-index:500;min-width:190px;padding:5px;animation:slideUp .15s ease">
+        <a href="<?= BASE_URL ?>/index.php?p=citas&action=nueva" class="mas-dmenu-item">📅 Agendar cita</a>
+        <a href="<?= BASE_URL ?>/index.php?p=vacunas&action=nueva&mascota_id=<?= $m['id'] ?>" class="mas-dmenu-item">💉 Registrar vacuna</a>
+        <a href="<?= BASE_URL ?>/index.php?p=examenes&action=nuevo&mascota_id=<?= $m['id'] ?>" class="mas-dmenu-item">🔬 Nuevo examen</a>
+        <a href="https://wa.me/<?= $tel ?>" target="_blank" class="mas-dmenu-item">💬 WhatsApp dueño</a>
+      </div>
+    </div>
   </div>
-  <div class="flex-1">
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-      <span style="font-size:20px;font-weight:800;color:var(--text)"><?= clean($m['nombre']) ?></span>
-      <span style="font-size:16px"><?= $m['sexo']==='macho'?'♂️':'♀️' ?></span>
-      <span class="badge <?= $m['estado']==='activo'?'b-success':'b-danger' ?>"><?= ucfirst($m['estado']) ?></span>
-    </div>
-    <div style="font-size:12px;color:var(--text3);margin-top:3px">
-      <?= ucfirst($m['especie']) ?><?= $m['raza']?" · ".clean($m['raza']):'' ?> <?= $edad?" · $edad":'' ?> <?= $m['peso']?" · ".clean($m['peso'])." kg":'' ?>
-    </div>
-  </div>
-  <div class="flex gap-2" style="position:relative">
-    <a href="<?= BASE_URL ?>/index.php?p=mascotas&action=editar&id=<?= $m['id'] ?>" class="btn btn-ghost btn-sm">✏️ Editar</a>
-    <a href="<?= BASE_URL ?>/index.php?p=historial&mascota_id=<?= $m['id'] ?>" class="btn btn-primary btn-sm">🏥 Historia Clínica</a>
-    <button class="btn btn-ghost btn-sm" id="btnMenu<?= $m['id'] ?>"
-            onclick="toggleMasMenu(<?= $m['id'] ?>, event)" style="padding:8px 12px">⋯</button>
-    <!-- Dropdown fuera del flujo del botón -->
-    <div id="dropMenu<?= $m['id'] ?>"
-         style="display:none;position:absolute;top:100%;right:0;margin-top:4px;background:var(--bg2);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.12);z-index:500;min-width:190px;padding:5px;animation:slideUp .15s ease">
-      <a href="<?= BASE_URL ?>/index.php?p=citas&action=nueva" class="mas-dmenu-item">📅 Agendar cita</a>
-      <a href="<?= BASE_URL ?>/index.php?p=vacunas&action=nueva&mascota_id=<?= $m['id'] ?>" class="mas-dmenu-item">💉 Registrar vacuna</a>
-      <a href="<?= BASE_URL ?>/index.php?p=examenes&action=nuevo&mascota_id=<?= $m['id'] ?>" class="mas-dmenu-item">🔬 Nuevo examen</a>
-      <a href="https://wa.me/<?= $tel ?>" target="_blank" class="mas-dmenu-item">💬 WhatsApp dueño</a>
-    </div>
+  <!-- Stats -->
+  <div class="mas-banner-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;padding:0 16px 14px">
+    <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800;color:#3b82f6"><?= $n_consultas ?></div><div style="font-size:11px;color:var(--text3)">Consultas</div></div>
+    <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800;color:#10b981"><?= $n_vacunas ?></div><div style="font-size:11px;color:var(--text3)">Vacunas</div></div>
+    <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--text)"><?= $n_examenes ?></div><div style="font-size:11px;color:var(--text3)">Exámenes</div></div>
+    <div style="background:var(--bg2);border-radius:10px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--text)"><?= $n_hosp ?></div><div style="font-size:11px;color:var(--text3)">Internado</div></div>
   </div>
 </div>
 
@@ -191,7 +226,7 @@ if ($action==='ver' && isset($_GET['id'])) {
 
     <!-- Foto + datos chip -->
     <div class="mas-photo-card">
-      <div class="mas-photo-wrap" style="height:220px">
+      <div class="mas-photo-wrap" style="height:220px;background:<?= $ec ?>14">
         <?php if($foto_url): ?>
         <img src="<?= $foto_url ?>" alt="<?= clean($m['nombre']) ?>">
         <?php else: ?>
@@ -206,11 +241,9 @@ if ($action==='ver' && isset($_GET['id'])) {
         </label>
       </div>
       <div style="padding:14px 16px">
-        <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Identificación</div>
-        <div class="mas-field"><span class="mas-field-label">Chip</span><span class="mas-field-val" style="font-family:monospace"><?= clean($m['chip_numero']??'—') ?></span></div>
-        <div class="mas-field"><span class="mas-field-label">Microchip</span><span class="mas-field-val"><?= ($m['microchip']??0)?'<span class="badge b-success">✅ Registrado</span>':'<span style="color:var(--text3);font-size:12px">No</span>' ?></span></div>
-        <div class="mas-field"><span class="mas-field-label">Esterilizado</span><span class="mas-field-val"><?= ($m['esterilizado']??0)?'<span class="badge b-info">Sí</span>':'<span style="color:var(--danger);font-size:12px">No</span>' ?></span></div>
-        <div class="mas-field"><span class="mas-field-label">Alérgico</span><span class="mas-field-val"><?= $m['alergias']?'<span class="badge b-warning">Sí</span>':'<span style="color:var(--text3);font-size:12px">No</span>' ?></span></div>
+        <div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:<?= $ec ?>"></span>Identificación</div>
+        <div class="mas-field"><span class="mas-field-label">N° de chip</span><span class="mas-field-val" style="font-family:monospace"><?= clean($m['chip_numero']??'—') ?></span></div>
+        <div class="mas-field"><span class="mas-field-label">Microchip</span><span class="mas-field-val"><?= ($m['microchip']??0)?'<span class="badge b-success">✅ Registrado</span>':'<span style="color:var(--text3);font-size:12px">No registrado</span>' ?></span></div>
         <div class="mas-field"><span class="mas-field-label">Fecha registro</span><span class="mas-field-val"><?= date('d/m/Y',strtotime($m['created_at']??date('Y-m-d'))) ?></span></div>
         <?php $ultima=$db->prepare("SELECT MAX(fecha) FROM consultas WHERE mascota_id=?");$ultima->execute([$m['id']]);$ultima=$ultima->fetchColumn(); ?>
         <div class="mas-field"><span class="mas-field-label">Última visita</span><span class="mas-field-val" style="color:var(--primary)"><?= $ultima?date('d/m/Y',strtotime($ultima)):'—' ?></span></div>
@@ -219,7 +252,7 @@ if ($action==='ver' && isset($_GET['id'])) {
 
     <!-- Dueño -->
     <div class="mas-info-card">
-      <div class="mas-ic-head">👤 Dueño / Propietario</div>
+      <div class="mas-ic-head" style="border-bottom-color:<?= $ec ?>33">👤 Dueño / Propietario</div>
       <div class="mas-ic-body">
         <div style="font-size:14px;font-weight:700;color:var(--text);margin-bottom:4px"><?= clean($m['dueno']) ?></div>
         <a href="https://wa.me/<?= $tel ?>" target="_blank" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--wa);text-decoration:none;font-weight:600;margin-bottom:4px">
@@ -250,9 +283,9 @@ if ($action==='ver' && isset($_GET['id'])) {
 
       <!-- Tab: Resumen -->
       <div id="tab-resumen" class="mas-tab-content active" style="padding:16px">
-        <div class="grid g2 mb-3" style="gap:12px">
-          <div>
-            <div style="font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Información general</div>
+        <div class="grid g2 mb-3" style="gap:0;position:relative">
+          <div style="padding-right:32px">
+            <div class="mas-sec-title">Información general</div>
             <div class="mas-field"><span class="mas-field-label">Especie</span><span class="mas-field-val"><?= ucfirst($m['especie']) ?></span></div>
             <div class="mas-field"><span class="mas-field-label">Raza</span><span class="mas-field-val"><?= clean($m['raza']??'Criollo') ?></span></div>
             <div class="mas-field"><span class="mas-field-label">Color</span><span class="mas-field-val"><?= clean($m['color']??'—') ?></span></div>
@@ -269,11 +302,11 @@ if ($action==='ver' && isset($_GET['id'])) {
             </div>
             <div class="mas-field"><span class="mas-field-label">Grupo sanguíneo</span><span class="mas-field-val"><?= clean($m['grupo_sanguineo']??'—') ?></span></div>
           </div>
-          <div>
-            <div style="font-size:11px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Estado reproductivo</div>
-            <div class="mas-field"><span class="mas-field-label">Esterilizado</span><span class="mas-field-val"><?= ($m['esterilizado']??0)?'<span class="badge b-info">Sí</span>':'<span class="badge b-danger">No</span>' ?></span></div>
-            <div class="mas-field"><span class="mas-field-label">Alérgico</span><span class="mas-field-val"><?= $m['alergias']?'<span class="badge b-warning">Sí</span>':'<span class="badge b-success">No</span>' ?></span></div>
-            <div class="mas-field"><span class="mas-field-label">Microchip</span><span class="mas-field-val"><?= ($m['microchip']??0)?'<span class="badge b-success">Registrado</span>':'<span class="badge b-gray">No</span>' ?></span></div>
+          <div style="border-left:1px solid var(--border);padding-left:32px">
+            <div class="mas-sec-title">Salud y estado</div>
+            <div class="mas-field"><span class="mas-field-label">Esterilizado</span><span class="mas-field-val"><?= ($m['esterilizado']??0)?'<span class="badge b-info">Sí</span>':'<span style="color:var(--text3);font-size:12px">No</span>' ?></span></div>
+            <div class="mas-field"><span class="mas-field-label">Alérgico</span><span class="mas-field-val"><?= $m['alergias']?'<span class="badge b-warning">Sí</span>':'<span style="color:var(--text3);font-size:12px">No</span>' ?></span></div>
+            <div class="mas-field"><span class="mas-field-label">Microchip</span><span class="mas-field-val"><?= ($m['microchip']??0)?'<span class="badge b-success">Registrado</span>':'<span style="color:var(--text3);font-size:12px">No</span>' ?></span></div>
             <div class="mas-field"><span class="mas-field-label">Personalidad</span><span class="mas-field-val" style="max-width:120px;text-align:right"><?= clean($m['personalidad']??'—') ?></span></div>
             <div class="mas-field"><span class="mas-field-label">Alimentación</span><span class="mas-field-val" style="max-width:120px;text-align:right"><?= clean($m['alimentacion']??'—') ?></span></div>
           </div>
@@ -286,7 +319,7 @@ if ($action==='ver' && isset($_GET['id'])) {
         <div class="alert alert-info mb-2"><span class="alert-icon">🔵</span><div><strong>Condiciones:</strong> <?= clean($m['condiciones']) ?></div></div>
         <?php endif; ?>
         <!-- Actividad reciente -->
-        <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:12px">Actividad reciente</div>
+        <div class="mas-sec-title" style="margin-top:4px">Actividad reciente</div>
         <?php if(empty($actividad)): ?>
         <div style="text-align:center;padding:20px;color:var(--text3);font-size:12px">Sin actividad registrada.</div>
         <?php else: ?>
@@ -402,16 +435,27 @@ if ($action==='ver' && isset($_GET['id'])) {
   <!-- ── DERECHA ── -->
   <div class="mas-right">
 
+    <!-- Acciones rápidas -->
+    <div class="mas-info-card">
+      <div class="mas-ic-head" style="border-bottom-color:<?= $ec ?>33">⚡ Acciones rápidas</div>
+      <div style="padding:10px">
+        <a href="<?= BASE_URL ?>/index.php?p=citas&action=nueva" class="mas-dmenu-item">📅 Agendar cita</a>
+        <a href="<?= BASE_URL ?>/index.php?p=vacunas&action=nueva&mascota_id=<?= $m['id'] ?>" class="mas-dmenu-item">💉 Registrar vacuna</a>
+        <a href="<?= BASE_URL ?>/index.php?p=examenes&action=nuevo&mascota_id=<?= $m['id'] ?>" class="mas-dmenu-item">🔬 Nuevo examen</a>
+        <a href="https://wa.me/<?= $tel ?>" target="_blank" class="mas-dmenu-item">💬 WhatsApp dueño</a>
+      </div>
+    </div>
+
     <!-- Resumen médico -->
     <div class="mas-info-card">
       <div class="mas-ic-head">🏥 Resumen médico</div>
-      <div class="resumen-med-stat"><span style="font-size:12px;color:var(--text3)">Total consultas</span><span style="font-size:13px;font-weight:700;color:var(--text)"><?= $n_consultas ?></span></div>
-      <div class="resumen-med-stat"><span style="font-size:12px;color:var(--text3)">Total vacunas</span><span style="font-size:13px;font-weight:700;color:var(--text)"><?= $n_vacunas ?></span></div>
-      <div class="resumen-med-stat"><span style="font-size:12px;color:var(--text3)">Total exámenes</span><span style="font-size:13px;font-weight:700;color:var(--text)"><?= $n_examenes ?></span></div>
-      <div class="resumen-med-stat"><span style="font-size:12px;color:var(--text3)">Total hospitalizaciones</span>
-        <?php try{$nh=$db->prepare("SELECT COUNT(*) FROM hospitalizacion WHERE mascota_id=?");$nh->execute([$m['id']]);echo '<span style="font-size:13px;font-weight:700;color:var(--text)">'.(int)$nh->fetchColumn().'</span>';}catch(Exception $e){echo '<span style="font-size:13px;font-weight:700;color:var(--text)">0</span>';} ?>
+      <div style="padding:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px">
+        <div style="background:#3b82f612;border-radius:10px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800;color:#3b82f6"><?= $n_consultas ?></div><div style="font-size:10px;color:var(--text3)">Consultas</div></div>
+        <div style="background:#10b98112;border-radius:10px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800;color:#10b981"><?= $n_vacunas ?></div><div style="font-size:10px;color:var(--text3)">Vacunas</div></div>
+        <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--text)"><?= $n_examenes ?></div><div style="font-size:10px;color:var(--text3)">Exámenes</div></div>
+        <div style="background:var(--bg3);border-radius:10px;padding:10px;text-align:center"><div style="font-size:20px;font-weight:800;color:var(--text)"><?= $n_hosp ?></div><div style="font-size:10px;color:var(--text3)">Internado</div></div>
       </div>
-      <div style="padding:10px 16px">
+      <div style="padding:0 16px 12px">
         <a href="<?= BASE_URL ?>/index.php?p=historial&mascota_id=<?= $m['id'] ?>" class="btn btn-ghost btn-xs btn-block">Ver historial completo →</a>
       </div>
     </div>
@@ -546,10 +590,18 @@ if (in_array($action,['nuevo','editar'])) {
       <div class="flex-1">
         <div class="form-row">
           <div class="form-group"><label class="form-label required">Dueño</label>
-            <select class="form-input" name="cliente_id" required>
-              <option value="">— Seleccionar —</option>
-              <?php foreach($clientes_sel as $c): ?><option value="<?= $c['id'] ?>" <?= ($editing['cliente_id']??$_GET['cliente_id']??'')==$c['id']?'selected':'' ?>><?= clean($c['nombre']) ?></option><?php endforeach; ?>
-            </select>
+            <?php
+              // Nombre precargado si estamos editando o viene cliente_id por URL
+              $cli_pre_id = $editing['cliente_id'] ?? $_GET['cliente_id'] ?? '';
+              $cli_pre_nom = '';
+              if ($cli_pre_id) { foreach($clientes_sel as $c){ if($c['id']==$cli_pre_id){ $cli_pre_nom=$c['nombre']; break; } } }
+            ?>
+            <div style="position:relative">
+              <input type="text" id="inp-dueno-mas" class="form-input" autocomplete="off"
+                     placeholder="🔍 Escribe para buscar dueño..." value="<?= clean($cli_pre_nom) ?>">
+              <input type="hidden" name="cliente_id" id="hid-dueno-mas" value="<?= clean($cli_pre_id) ?>" required>
+              <div id="drop-dueno-mas" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:4px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.12);z-index:50;max-height:240px;overflow-y:auto"></div>
+            </div>
           </div>
           <div class="form-group"><label class="form-label required">Nombre</label>
             <input class="form-input" name="nombre" value="<?= clean($editing['nombre']??'') ?>" required>
@@ -632,6 +684,13 @@ if (in_array($action,['nuevo','editar'])) {
 </div>
 <script>
 function previewFoto(input){const f=input.files[0];if(!f)return;const r=new FileReader();r.onload=e=>{const box=document.getElementById('foto-preview');let img=document.getElementById('foto-img');if(!img){img=document.createElement('img');img.id='foto-img';img.style.cssText='width:100%;height:100%;object-fit:cover';const em=document.getElementById('foto-emoji');if(em)em.style.display='none';box.insertBefore(img,box.firstChild);}img.src=e.target.result;};r.readAsDataURL(f);}
+// Buscador de dueño (escribir para filtrar)
+var _MAS_CLIENTES = <?= json_encode(array_map(fn($c)=>['id'=>$c['id'],'nombre'=>$c['nombre'],'label'=>$c['nombre'].($c['telefono']?' · '.$c['telefono']:'')], $clientes_sel)) ?>;
+document.addEventListener('DOMContentLoaded', function(){
+  if (typeof vetSearchSelect === 'function') {
+    vetSearchSelect('inp-dueno-mas','drop-dueno-mas','hid-dueno-mas', _MAS_CLIENTES, 'nombre');
+  }
+});
 </script>
 <?php
     require_once __DIR__ . '/../includes/footer.php';
@@ -674,10 +733,10 @@ $st->execute($params); $mascotas=$st->fetchAll();
     <div class="page-title">🐾 Mascotas</div>
     <div class="page-desc"><?= count($mascotas) ?> pacientes activos</div>
   </div>
-  <div class="flex gap-2 items-center">
+  <div class="flex gap-2 items-center" style="flex-wrap:wrap">
     <!-- Buscador con autocomplete -->
-    <div style="position:relative" id="masSearchWrap">
-      <div style="display:flex;align-items:center;background:var(--bg2);border:1.5px solid var(--border);border-radius:var(--r-full);padding:0 14px;gap:8px;transition:border-color .2s;width:280px"
+    <div style="position:relative;flex:1;min-width:200px" id="masSearchWrap">
+      <div style="display:flex;align-items:center;background:var(--bg2);border:1.5px solid var(--border);border-radius:var(--r-full);padding:0 14px;gap:8px;transition:border-color .2s"
            id="masSearchBox">
         <span style="color:var(--text3);font-size:14px;flex-shrink:0">🔍</span>
         <input id="masSearchInput" type="text"
@@ -696,16 +755,16 @@ $st->execute($params); $mascotas=$st->fetchAll();
         display:none;position:absolute;top:calc(100% + 6px);left:0;right:0;
         background:var(--bg2);border:1px solid var(--border);border-radius:12px;
         box-shadow:0 8px 32px rgba(0,0,0,.12);z-index:500;max-height:320px;
-        overflow-y:auto;min-width:280px;
+        overflow-y:auto;min-width:200px;
       "></div>
     </div>
-    <select class="form-input" name="especie" id="masEspecieSel" style="width:130px" onchange="masFilterEspecie(this.value)">
+    <select class="form-input" name="especie" id="masEspecieSel" style="width:auto;min-width:100px;flex-shrink:0" onchange="masFilterEspecie(this.value)">
       <option value="">Todas</option>
       <?php foreach($especie_labels as $k=>$v): ?>
       <option value="<?= $k ?>" <?= $esp_f===$k?'selected':'' ?>><?= $v ?></option>
       <?php endforeach; ?>
     </select>
-    <a href="?p=mascotas&action=nuevo" class="btn btn-primary">＋ Nueva Mascota</a>
+    <a href="?p=mascotas&action=nuevo" class="btn btn-primary" style="flex-shrink:0;white-space:nowrap">＋ Nueva</a>
   </div>
 </div>
 
@@ -809,22 +868,32 @@ document.addEventListener('click', e => {
 </script>
 
 <style>
-/* Mascotas grid responsive */
-.mas-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
-@media(max-width:1024px){ .mas-grid { grid-template-columns:repeat(3,1fr); } }
+/* Mascotas — filas horizontales en grilla de 3 columnas (Diseño B compacto) */
+.mas-list { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+@media(max-width:1280px){ .mas-list { grid-template-columns:repeat(2,1fr); } }
+@media(max-width:768px){ .mas-list { grid-template-columns:1fr; } }
+.mas-row {
+  display:flex; align-items:center; gap:12px;
+  background:var(--bg2); border:1.5px solid var(--border);
+  border-radius:14px; padding:11px 14px; transition:all .15s; min-width:0;
+}
+.mas-row:hover { box-shadow:0 3px 14px rgba(0,0,0,.1); transform:translateY(-1px); }
+.mas-avatar {
+  width:50px; height:50px; border-radius:13px; flex-shrink:0;
+  background:var(--bg3); overflow:hidden;
+  display:flex; align-items:center; justify-content:center; font-size:25px;
+}
+.mas-avatar img { width:100%; height:100%; object-fit:cover; }
+.mas-row-info { flex:1; min-width:0; overflow:hidden; }
+.mas-row-info > div { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.mas-row-acciones { display:flex; gap:5px; flex-shrink:0; }
 @media(max-width:768px){
-  .mas-grid { grid-template-columns:1fr; gap:10px; }
-  .mas-card { display:flex !important; flex-direction:row !important; align-items:stretch !important; }
-  .mas-card-foto { width:90px !important; min-width:90px !important; height:auto !important; flex-shrink:0 !important; }
-  .mas-card-foto img { height:100% !important; }
-  .mas-card-foto .mas-emoji { height:90px !important; }
-  .mas-card-body { flex:1; padding:12px !important; }
-  .mas-card-nombre { font-size:14px !important; }
-  .mas-card-botones a:first-child { font-size:11px !important; padding:5px 8px !important; }
+  .mas-row { gap:11px; padding:10px 12px; }
+  .mas-avatar { width:46px; height:46px; font-size:22px; }
 }
 </style>
 
-<div class="mas-grid">
+<div class="mas-list">
   <?php foreach($mascotas as $m):
     $foto_url=!empty($m['foto'])&&file_exists(UPLOADS_PATH.'/'.$m['foto'])?BASE_URL.'/public/uploads/'.$m['foto']:null;
     $edad='';if($m['fecha_nacimiento']){$diff=(new DateTime())->diff(new DateTime($m['fecha_nacimiento']));$edad=$diff->y>0?$diff->y.'a ':''.$diff->m.'m';$edad=trim($edad);}
@@ -832,56 +901,44 @@ document.addEventListener('click', e => {
     $especie_color=['perro'=>'#10b981','gato'=>'#6366f1','conejo'=>'#f59e0b','ave'=>'#3b82f6','reptil'=>'#84cc16','roedor'=>'#f97316','otro'=>'#8b5cf6'];
     $ec=$especie_color[$m['especie']]??'#10b981';
   ?>
-  <div class="mas-card" style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;overflow:hidden;transition:all .18s;cursor:pointer;display:flex;flex-direction:column"
-       onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 24px rgba(0,0,0,.09)'"
-       onmouseout="this.style.transform='';this.style.boxShadow=''">
-    <!-- Foto -->
-    <a href="?p=mascotas&action=ver&id=<?= $m['id'] ?>" style="display:block;position:relative;text-decoration:none" class="mas-card-foto">
-      <div style="width:100%;height:130px;position:relative;background:var(--bg3);overflow:hidden">
-        <?php if($foto_url): ?>
-        <img src="<?= $foto_url ?>" style="width:100%;height:100%;object-fit:cover;object-position:center 20%" alt="<?= clean($m['nombre']) ?>">
-        <?php else: ?>
-        <div class="mas-emoji" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#f0fdf4,#e0f2fe)">
-          <span style="font-size:52px;filter:drop-shadow(0 2px 8px rgba(0,0,0,.08))"><?= $especie_icons[$m['especie']]??'🐾' ?></span>
-        </div>
-        <?php endif; ?>
-        <div style="position:absolute;top:8px;right:8px;background:<?= $ec ?>;color:#fff;font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px"><?= ucfirst($m['especie']) ?></div>
-        <?php if($edad): ?>
-        <div style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,.5);color:#fff;font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px"><?= $edad ?></div>
-        <?php endif; ?>
-      </div>
+  <div class="mas-row" style="border-color:<?= $ec ?>">
+    <!-- Avatar -->
+    <a href="?p=mascotas&action=ver&id=<?= $m['id'] ?>" class="mas-avatar" style="text-decoration:none;background:<?= $ec ?>18">
+      <?php if($foto_url): ?>
+        <img src="<?= $foto_url ?>" alt="<?= clean($m['nombre']) ?>">
+      <?php else: ?>
+        <span><?= $especie_icons[$m['especie']]??'🐾' ?></span>
+      <?php endif; ?>
     </a>
     <!-- Info -->
-    <div class="mas-card-body" style="padding:13px 15px;flex:1;display:flex;flex-direction:column">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
-        <a href="?p=mascotas&action=ver&id=<?= $m['id'] ?>" class="mas-card-nombre" style="font-size:15px;font-weight:700;color:var(--text);text-decoration:none"><?= clean($m['nombre']) ?></a>
-        <span style="font-size:15px;color:<?= $m['sexo']==='macho'?'#3b82f6':'#ec4899' ?>"><?= $m['sexo']==='macho'?'♂':'♀' ?></span>
+    <div class="mas-row-info">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <a href="?p=mascotas&action=ver&id=<?= $m['id'] ?>" style="font-size:15px;font-weight:700;color:var(--text);text-decoration:none"><?= clean($m['nombre']) ?></a>
+        <span style="font-size:13px;color:<?= $m['sexo']==='macho'?'#3b82f6':'#ec4899' ?>"><?= $m['sexo']==='macho'?'♂':'♀' ?></span>
+        <span style="background:<?= $ec ?>;color:#fff;font-size:10px;font-weight:700;padding:2px 9px;border-radius:999px"><?= ucfirst($m['especie']) ?><?= $edad?' · '.$edad:'' ?></span>
       </div>
-      <div style="font-size:12px;color:var(--text3);margin-bottom:6px"><?= clean($m['raza']??ucfirst($m['especie'])) ?></div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:<?= $m['ultima_visita']?'3px':'8px' ?>">👤 <?= clean($m['dueno']) ?></div>
-      <?php if($m['ultima_visita']): ?>
-      <div style="font-size:11px;color:var(--text3);margin-bottom:8px">Última visita: <strong><?= date('d/m/Y',strtotime($m['ultima_visita'])) ?></strong></div>
-      <?php endif; ?>
-      <!-- Botones -->
-      <div class="mas-card-botones" style="display:flex;gap:5px;margin-top:auto">
-        <a href="?p=mascotas&action=ver&id=<?= $m['id'] ?>"
-           style="flex:1;display:flex;align-items:center;justify-content:center;padding:7px 8px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;font-weight:600;color:var(--text2);text-decoration:none;background:var(--bg3);transition:all .15s"
-           onmouseover="this.style.borderColor='var(--primary)';this.style.color='var(--primary)';this.style.background='var(--primary-l)'"
-           onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text2)';this.style.background='var(--bg3)'">Ver ficha</a>
-        <a href="https://wa.me/<?= $tel2 ?>" target="_blank"
-           style="width:33px;height:33px;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--border);border-radius:8px;font-size:15px;text-decoration:none;background:var(--bg3);transition:all .15s"
-           onmouseover="this.style.borderColor='#25d366';this.style.background='#dcfce7'"
-           onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg3)'" title="WhatsApp">💬</a>
-        <a href="?p=citas&action=nueva"
-           style="width:33px;height:33px;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--border);border-radius:8px;font-size:15px;text-decoration:none;background:var(--bg3);transition:all .15s"
-           onmouseover="this.style.borderColor='var(--primary)';this.style.background='var(--primary-l)'"
-           onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg3)'" title="Agendar cita">📅</a>
-      </div>
+      <div style="font-size:12px;color:var(--text3);margin-top:1px"><?= clean($m['raza']??ucfirst($m['especie'])) ?></div>
+      <div style="font-size:12px;color:var(--text2);margin-top:1px">👤 <?= clean($m['dueno']) ?><?php if($m['ultima_visita']): ?> · <span style="color:var(--text3)">Últ. visita <?= date('d/m/Y',strtotime($m['ultima_visita'])) ?></span><?php endif; ?></div>
+    </div>
+    <!-- Acciones -->
+    <div class="mas-row-acciones">
+      <a href="?p=mascotas&action=ver&id=<?= $m['id'] ?>"
+         style="display:flex;align-items:center;justify-content:center;gap:4px;padding:7px 11px;border:1.5px solid var(--border);border-radius:8px;font-size:12px;font-weight:600;color:var(--text2);text-decoration:none;background:var(--bg3);transition:all .15s;white-space:nowrap"
+         onmouseover="this.style.borderColor='var(--primary)';this.style.color='var(--primary)';this.style.background='var(--primary-l)'"
+         onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text2)';this.style.background='var(--bg3)'" title="Ver ficha">Ficha</a>
+      <a href="https://wa.me/<?= $tel2 ?>" target="_blank"
+         style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--border);border-radius:8px;font-size:14px;text-decoration:none;background:var(--bg3);transition:all .15s"
+         onmouseover="this.style.borderColor='#25d366';this.style.background='#dcfce7'"
+         onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg3)'" title="WhatsApp">💬</a>
+      <a href="?p=citas&action=nueva"
+         style="width:32px;height:32px;display:flex;align-items:center;justify-content:center;border:1.5px solid var(--border);border-radius:8px;font-size:14px;text-decoration:none;background:var(--bg3);transition:all .15s"
+         onmouseover="this.style.borderColor='var(--primary)';this.style.background='var(--primary-l)'"
+         onmouseout="this.style.borderColor='var(--border)';this.style.background='var(--bg3)'" title="Agendar cita">📅</a>
     </div>
   </div>
   <?php endforeach; ?>
   <?php if(empty($mascotas)): ?>
-  <div class="card text-center" style="grid-column:1/-1;padding:60px">
+  <div class="card text-center" style="padding:60px">
     <div style="font-size:48px;margin-bottom:14px;opacity:.3">🐾</div>
     <div style="font-size:15px;font-weight:600;margin-bottom:8px">No se encontraron mascotas</div>
     <a href="?p=mascotas&action=nuevo" class="btn btn-primary">Nueva mascota</a>

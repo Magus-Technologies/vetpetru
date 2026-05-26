@@ -99,10 +99,13 @@ table.t td.c{text-align:center}
   <div class="sep"></div>
 
   <!-- TOTALES -->
-  <div class="tot-row"><span>SUBTOTAL:</span></div>
+  <?php $aplica_igv = !isset($v['aplica_igv']) || (int)$v['aplica_igv']===1; ?>
+  <div class="tot-row"><span><?= $aplica_igv ? 'OP. GRAVADAS:' : 'OP. INAFECTAS:' ?></span></div>
   <div class="tot-row" style="justify-content:flex-end"><span>PEN <?= number_format($v['subtotal']-($v['descuento']??0),2) ?></span></div>
-  <div class="tot-row"><span>IGV (18%):</span></div>
-  <div class="tot-row" style="justify-content:flex-end"><span>PEN <?= number_format($v['igv'],2) ?></span></div>
+  <?php if ($aplica_igv): ?>
+    <div class="tot-row"><span>IGV (18%):</span></div>
+    <div class="tot-row" style="justify-content:flex-end"><span>PEN <?= number_format($v['igv'],2) ?></span></div>
+  <?php endif; ?>
   <?php if(($v['descuento']??0)>0): ?>
   <div class="tot-row"><span>DESCUENTO:</span><span>-PEN <?= number_format($v['descuento'],2) ?></span></div>
   <?php endif; ?>

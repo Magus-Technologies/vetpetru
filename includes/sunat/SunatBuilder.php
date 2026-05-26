@@ -15,7 +15,8 @@ class SunatBuilder
      */
     public static function buildComprobante(array $venta, array $cliente, array $items): array
     {
-        $tipo = $venta['tipo_comprobante']; // factura | boleta
+        $tipo       = $venta['tipo_comprobante']; // factura | boleta
+        $aplica_igv = !isset($venta['aplica_igv']) || (int)$venta['aplica_igv'] === 1;
 
         return [
             'endpoint'   => SUNAT_ENDPOINT,
@@ -27,7 +28,8 @@ class SunatBuilder
             'fecha_emision' => $venta['fecha'] ?? date('Y-m-d H:i:s'),
             'moneda'     => 'PEN',
             'forma_pago' => 'contado',
-            'detalles'   => self::detalles($items),
+            'aplica_igv' => $aplica_igv,
+            'detalles'   => self::detalles($items, $aplica_igv),
         ];
     }
 
@@ -49,17 +51,20 @@ class SunatBuilder
     }
 
     /**
-     * Resuelve el documento del cliente:
-     *  - Factura: requiere RUC. Si no hay RUC en el cliente → excepción.
-     *  - Boleta : usa DNI si existe; si no, "varios" (tipo_doc=0, num=00000000).
+     * Resuelve el documento del cliente según tipo de comprobante y documento.
+     * Factura: requiere RUC (tipo_doc=6).
+     * Boleta: DNI (1), Carné Extranjería (4), Pasaporte (7), o "varios" (0).
      */
     private static function cliente(array $cli, string $tipo): array
     {
-        $ruc = trim($cli['ruc'] ?? '');
-        $dni = trim($cli['dni'] ?? '');
-        $nom = trim($cli['nombre'] ?? '');
-        $dir = trim($cli['direccion'] ?? '-');
+        $ruc       = trim($cli['ruc'] ?? '');
+        $dni       = trim($cli['dni'] ?? '');
+        $ce        = trim($cli['ce'] ?? '');
+        $pasaporte = trim($cli['pasaporte'] ?? '');
+        $nom       = trim($cli['nombre'] ?? '');
+        $dir       = trim($cli['direccion'] ?? '-');
 
+        // Factura → requiere RUC
         if ($tipo === 'factura') {
             if ($ruc === '' || strlen($ruc) !== 11) {
                 throw new RuntimeException("El cliente '$nom' no tiene RUC válido. Las facturas requieren RUC de 11 dígitos.");
@@ -72,7 +77,7 @@ class SunatBuilder
             ];
         }
 
-        // Boleta
+        // Boleta → puede usar DNI, CE, Pasaporte, o "varios"
         if ($dni !== '' && strlen($dni) === 8) {
             return [
                 'tipo_doc'    => '1',
@@ -82,6 +87,25 @@ class SunatBuilder
             ];
         }
 
+        if ($ce !== '' && strlen($ce) >= 9) {
+            return [
+                'tipo_doc'    => '4',
+                'num_doc'     => $ce,
+                'rzn_social'  => $nom,
+                'direccion'   => $dir,
+            ];
+        }
+
+        if ($pasaporte !== '') {
+            return [
+                'tipo_doc'    => '7',
+                'num_doc'     => $pasaporte,
+                'rzn_social'  => $nom,
+                'direccion'   => $dir,
+            ];
+        }
+
+        // Si no hay ningún documento → clientes varios
         return [
             'tipo_doc'    => '0',
             'num_doc'     => '00000000',
@@ -92,10 +116,11 @@ class SunatBuilder
 
     /**
      * Transforma `venta_items` al formato esperado.
-     * Asume que `precio_unitario` viene CON IGV incluido (el servicio
-     * Greenter divide entre 1.18 internamente).
+     * Cuando $aplica_igv=true, `precio_unitario` viene CON IGV incluido (Greenter
+     * divide entre 1.18 internamente). Cuando $aplica_igv=false, se marca cada
+     * item como inafecto (sin IGV).
      */
-    private static function detalles(array $items): array
+    private static function detalles(array $items, bool $aplica_igv = true): array
     {
         $out = [];
         foreach ($items as $i => $it) {
@@ -104,7 +129,8 @@ class SunatBuilder
                 'unidad'       => 'NIU', // NIU=unidad, ZZ=servicio. NIU funciona para ambos en SUNAT beta.
                 'descripcion'  => $it['descripcion'],
                 'cantidad'     => (float) $it['cantidad'],
-                'precio'       => (float) $it['precio_unitario'], // con IGV
+                'precio'       => (float) $it['precio_unitario'],
+                'tipo_igv'     => $aplica_igv ? 'gravado' : 'inafecto',
             ];
         }
         return $out;

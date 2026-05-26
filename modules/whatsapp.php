@@ -1,22 +1,70 @@
 <?php
 $page = 'whatsapp'; $pageTitle = 'WhatsApp Web';
+
+// ─────────────────────────────────────────────────────────────
+// Handlers AJAX (deben ir ANTES de incluir el header, para que la
+// respuesta sea JSON puro y no la página HTML completa).
+// ─────────────────────────────────────────────────────────────
+if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action'])
+    && in_array($_POST['action'], ['log','save_template','reset_template'], true)) {
+
+  require_once __DIR__ . '/../includes/config.php';
+  requireLogin();
+  $user = getUser();
+  $db   = getDB();
+
+  // Guardar en log de envíos
+  if ($_POST['action']==='log') {
+    $st = $db->prepare("INSERT INTO whatsapp_log (cliente_id,mascota_id,usuario_id,tipo,mensaje,telefono,url_generada,estado) VALUES (?,?,?,?,?,?,?,'generado')");
+    $st->execute([
+      (int)$_POST['cliente_id'],
+      (int)($_POST['mascota_id']??0) ?: null,
+      $user['id'],
+      $_POST['tipo'] ?? 'personalizado',
+      $_POST['mensaje'] ?? '',
+      $_POST['telefono'] ?? '',
+      $_POST['url'] ?? ''
+    ]);
+    jsonResponse(['ok'=>true]);
+  }
+
+  // Guardar plantilla personalizada (persistente en configuracion)
+  if ($_POST['action']==='save_template') {
+    $tipo  = preg_replace('/[^a-z_]/','', strtolower($_POST['tipo'] ?? ''));
+    $texto = (string)($_POST['mensaje'] ?? '');
+    if ($tipo === '') { jsonResponse(['ok'=>false,'error'=>'tipo inválido']); }
+    $clave = 'wa_tpl_'.$tipo;
+    // Asegurar que la columna 'valor' soporte emojis (utf8mb4). La tabla original
+    // suele venir en latin1 y rechaza caracteres de 4 bytes como 🐾, 💰, ✅.
+    try {
+      $col = $db->query("SHOW FULL COLUMNS FROM configuracion WHERE Field='valor'")->fetch();
+      $coll = $col['Collation'] ?? '';
+      if (stripos($coll, 'utf8mb4') === false) {
+        $db->exec("ALTER TABLE configuracion MODIFY `valor` TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+      }
+    } catch (Exception $e) { /* si no se puede alterar, intentamos igual abajo */ }
+    try {
+      $db->prepare("INSERT INTO configuracion (clave,valor) VALUES (?,?) ON DUPLICATE KEY UPDATE valor=?")
+         ->execute([$clave, $texto, $texto]);
+      jsonResponse(['ok'=>true]);
+    } catch (Exception $e) {
+      jsonResponse(['ok'=>false,'error'=>'No se pudo guardar (¿emojis no soportados?). '.$e->getMessage()]);
+    }
+  }
+
+  // Restablecer una plantilla a su valor por defecto
+  if ($_POST['action']==='reset_template') {
+    $tipo = preg_replace('/[^a-z_]/','', strtolower($_POST['tipo'] ?? ''));
+    if ($tipo !== '') {
+      $db->prepare("DELETE FROM configuracion WHERE clave=?")->execute(['wa_tpl_'.$tipo]);
+    }
+    jsonResponse(['ok'=>true]);
+  }
+}
+
 require_once __DIR__ . '/../includes/header.php';
 $db = getDB();
 
-// Guardar en log
-if ($_SERVER['REQUEST_METHOD']==='POST' && isset($_POST['action']) && $_POST['action']==='log') {
-  $st = $db->prepare("INSERT INTO whatsapp_log (cliente_id,mascota_id,usuario_id,tipo,mensaje,telefono,url_generada,estado) VALUES (?,?,?,?,?,?,?,'generado')");
-  $st->execute([
-    (int)$_POST['cliente_id'],
-    (int)($_POST['mascota_id']??0) ?: null,
-    $user['id'],
-    $_POST['tipo'] ?? 'personalizado',
-    $_POST['mensaje'] ?? '',
-    $_POST['telefono'] ?? '',
-    $_POST['url'] ?? ''
-  ]);
-  jsonResponse(['ok'=>true]);
-}
 
 // Datos para selects
 $clientes = $db->query("SELECT id,nombre,telefono FROM clientes WHERE activo=1 ORDER BY nombre")->fetchAll();
@@ -49,6 +97,19 @@ $vac_alerta = $db->query("
 
 $tipos_label = ['cita'=>'Confirmación cita','recibo'=>'Recibo','informe'=>'Informe médico','historial'=>'Historial','vacuna'=>'Recordatorio vacuna','recordatorio'=>'Recordatorio cita','receta'=>'Receta médica','personalizado'=>'Personalizado'];
 $tipos_badge = ['cita'=>'b-blue','recibo'=>'b-teal','informe'=>'b-red','historial'=>'b-gray','vacuna'=>'b-purple','recordatorio'=>'b-amber','receta'=>'b-green','personalizado'=>'b-gray'];
+
+// Nombre de la clínica/veterinaria desde configuración (para reemplazar "VetPro")
+$cfg = $db->query("SELECT clave,valor FROM configuracion")->fetchAll(PDO::FETCH_KEY_PAIR);
+$nombre_clinica = trim($cfg['nombre_clinica'] ?? $cfg['clinica_nombre'] ?? 'VetPro');
+if ($nombre_clinica === '') $nombre_clinica = 'VetPro';
+
+// Plantillas guardadas por el usuario (clave wa_tpl_<tipo>)
+$tpl_guardadas = [];
+foreach ($cfg as $k => $v) {
+  if (strpos($k, 'wa_tpl_') === 0) {
+    $tpl_guardadas[substr($k, 7)] = $v;
+  }
+}
 ?>
 
 <div class="page">
@@ -127,11 +188,16 @@ $tipos_badge = ['cita'=>'b-blue','recibo'=>'b-teal','informe'=>'b-red','historia
         <div class="form-group">
           <label class="form-label">Mensaje (editable)</label>
           <textarea class="form-input" id="msg-text" rows="7" oninput="updatePreview()" style="min-height:140px;font-size:13px"></textarea>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+            <button type="button" class="btn btn-sm btn-primary" onclick="guardarPlantilla()" title="Guarda este texto como predeterminado para este tipo de mensaje">💾 Guardar plantilla</button>
+            <button type="button" class="btn btn-sm" onclick="resetPlantilla()" title="Vuelve al texto original">↩️ Restablecer</button>
+            <span style="font-size:11px;color:var(--text3);align-self:center">Tu texto quedará guardado para próximas veces.</span>
+          </div>
         </div>
         <div>
           <div class="form-label">Variables</div>
           <div class="flex flex-wrap gap-1" style="flex-wrap:wrap">
-            <?php foreach(['{nombre_cliente}','{nombre_mascota}','{fecha}','{hora}','{veterinario}','{diagnostico}','{total}','{proxima_vacuna}','{numero_boleta}','{tipo_vacuna}'] as $v): ?>
+            <?php foreach(['{clinica}','{nombre_cliente}','{nombre_mascota}','{fecha}','{hora}','{veterinario}','{diagnostico}','{total}','{proxima_vacuna}','{numero_boleta}','{tipo_vacuna}'] as $v): ?>
             <span onclick="insertVar('<?= $v ?>')" style="font-size:11px;background:var(--bg3);border:0.5px solid var(--border2);border-radius:5px;padding:3px 8px;cursor:pointer;color:var(--text2)"><?= $v ?></span>
             <?php endforeach; ?>
           </div>
@@ -171,7 +237,7 @@ $tipos_badge = ['cita'=>'b-blue','recibo'=>'b-teal','informe'=>'b-red','historia
           </a>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
             <button class="btn btn-sm" onclick="copyURL()">📋 Copiar URL</button>
-            <button class="btn btn-sm" onclick="guardarLog()">💾 Registrar</button>
+            <button class="btn btn-sm" onclick="guardarLog()" title="Registra en el historial que enviaste este mensaje (requiere cliente y teléfono)">🗂️ Registrar envío</button>
           </div>
         </div>
         <div id="wa-ok" style="display:none;text-align:center;font-size:12px;color:#128C7E;font-weight:600;margin-top:6px"></div>
@@ -185,14 +251,14 @@ $tipos_badge = ['cita'=>'b-blue','recibo'=>'b-teal','informe'=>'b-red','historia
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
     <?php
     $plantillas = [
-      ['cita','📅','Confirmación de cita','b-blue', "🐾 *VetPro Veterinaria*\n\nHola {nombre_cliente} 👋\n\nTe confirmamos tu cita:\n\n📅 *Fecha:* {fecha}\n🕐 *Hora:* {hora}\n🐶 *Paciente:* {nombre_mascota}\n👨‍⚕️ *Veterinario:* {veterinario}\n\n📍 Av. Principal 234, Miraflores\n\nPor favor llega 10 min antes.\n_Responde si necesitas reprogramar._\n\n✅ VetPro — Cuidamos a tus mascotas"],
-      ['recordatorio','⏰','Recordatorio 24h antes','b-amber',"⏰ *Recordatorio VetPro*\n\nHola {nombre_cliente} 👋\n\nMañana es la cita de *{nombre_mascota}*:\n📅 {fecha} a las {hora}\n👨‍⚕️ {veterinario}\n\n¿Confirmas tu asistencia?\nResponde *SÍ* o *NO*\n\nVetPro 🐾"],
-      ['recibo','🧾','Recibo de venta','b-teal',"🧾 *Boleta VetPro*\nN° {numero_boleta}\n\nCliente: {nombre_cliente}\nMascota: {nombre_mascota}\nFecha: {fecha}\n\n💰 *Total: S/. {total}*\nMétodo: Yape ✅\n\nGracias por confiar en VetPro 🐾"],
-      ['informe','🏥','Informe médico','b-red',"🏥 *Informe Médico — VetPro*\n\nPaciente: *{nombre_mascota}*\nDueño: {nombre_cliente}\nFecha: {fecha}\nVet.: {veterinario}\n\n🔍 *Diagnóstico:*\n{diagnostico}\n\n💊 *Tratamiento:*\nAntibiótico + analgésico indicado\n\nVetPro 🐾"],
-      ['vacuna','💉','Recordatorio de vacuna','b-purple',"💉 *Alerta de Vacuna — VetPro*\n\nHola {nombre_cliente} 👋\n\nLa vacuna de *{nombre_mascota}* vence pronto:\n🗓️ *Vencimiento:* {proxima_vacuna}\n💉 {tipo_vacuna}\n\n👉 Agenda su cita respondiendo este mensaje.\n\nVetPro 🐾"],
-      ['receta','💊','Receta médica','b-green',"💊 *Receta Médica — VetPro*\n\nPaciente: *{nombre_mascota}*\nVet.: {veterinario}\nFecha: {fecha}\n\n📋 *Medicamentos recetados:*\n• Amoxicilina 500mg — 1 comp c/12h x 7 días\n• Meloxicam — 1 vez al día con comida x 5 días\n\n⚠️ Guardar en lugar fresco y seco.\n\nVetPro 🐾"],
-      ['historial','📋','Resumen historial clínico','b-gray',"📋 *Historial Clínico — VetPro*\n\nPaciente: *{nombre_mascota}*\nDueño: {nombre_cliente}\n\n🗓️ *Últimas consultas:*\n• Consulta reciente ✅\n• Vacunas al día ✅\n• Control de peso ✅\n\nPara historial completo, visítanos.\n\nVetPro 🐾"],
-      ['personalizado','✏️','Mensaje de bienvenida','b-teal',"🐾 *Bienvenido a VetPro, {nombre_cliente}!*\n\nNos complace que confíes en nosotros para el cuidado de *{nombre_mascota}* 🐾\n\nEn cualquier consulta o emergencia, escríbenos aquí.\n\n📍 Av. Principal 234, Miraflores\n📞 01-444-5678\n\nVetPro — Cuidamos a tus mascotas ❤️"],
+      ['cita','📅','Confirmación de cita','b-blue', $tpl_final['cita'] ?? ''],
+      ['recordatorio','⏰','Recordatorio 24h antes','b-amber', $tpl_final['recordatorio'] ?? ''],
+      ['recibo','🧾','Recibo de venta','b-teal', $tpl_final['recibo'] ?? ''],
+      ['informe','🏥','Informe médico','b-red', $tpl_final['informe'] ?? ''],
+      ['vacuna','💉','Recordatorio de vacuna','b-purple', $tpl_final['vacuna'] ?? ''],
+      ['receta','💊','Receta médica','b-green', $tpl_final['receta'] ?? ''],
+      ['historial','📋','Resumen historial clínico','b-gray', $tpl_final['historial'] ?? ''],
+      ['personalizado','✏️','Mensaje de bienvenida','b-teal', "🐾 *Bienvenido a {clinica}, {nombre_cliente}!*\n\nNos complace que confíes en nosotros para el cuidado de *{nombre_mascota}* 🐾\n\nEn cualquier consulta o emergencia, escríbenos aquí.\n\n{clinica} — Cuidamos a tus mascotas ❤️"],
     ];
     foreach($plantillas as [$tipo,$ico,$titulo,$badge,$msg]):
     ?>
@@ -202,7 +268,7 @@ $tipos_badge = ['cita'=>'b-blue','recibo'=>'b-teal','informe'=>'b-red','historia
         <div class="flex-1 font-bold text-sm"><?= $titulo ?></div>
         <span class="badge <?= $badge ?>"><?= $tipos_label[$tipo] ?? $tipo ?></span>
       </div>
-      <div style="font-size:11px;color:var(--text3);line-height:1.5;max-height:55px;overflow:hidden"><?= nl2br(htmlspecialchars(preg_replace('/\*(.*?)\*/', '$1', substr($msg,0,140)))) ?>...</div>
+      <div style="font-size:11px;color:var(--text3);line-height:1.5;max-height:55px;overflow:hidden"><?= nl2br(htmlspecialchars(preg_replace('/\*(.*?)\*/', '$1', substr(str_replace(['{clinica}','{veterinaria}'], $NC, $msg),0,140)))) ?>...</div>
       <button class="btn btn-sm btn-wa mt-1 w-full" onclick="loadPlantilla(<?= htmlspecialchars(json_encode($tipo)) ?>,<?= htmlspecialchars(json_encode($msg)) ?>)" style="justify-content:center">Usar plantilla</button>
     </div>
     <?php endforeach; ?>
@@ -293,17 +359,32 @@ $tipos_badge = ['cita'=>'b-blue','recibo'=>'b-teal','informe'=>'b-red','historia
 <script>
 var currentType = '<?= clean($pre_tipo) ?>';
 var WA_BASE_URL = '<?= BASE_URL ?>';
+var WA_CLINICA = <?= json_encode($nombre_clinica, JSON_UNESCAPED_UNICODE) ?>;
 
-var TEMPLATES = {
-  cita: "🐾 *VetPro Veterinaria*\n\nHola {nombre_cliente} 👋\n\nTe confirmamos tu cita:\n\n📅 *Fecha:* {fecha}\n🕐 *Hora:* {hora}\n🐶 *Paciente:* {nombre_mascota}\n👨‍⚕️ *Veterinario:* {veterinario}\n\n📍 Av. Principal 234, Miraflores\n\nPor favor llega 10 min antes.\n_Responde si necesitas reprogramar._\n\n✅ VetPro — Cuidamos a tus mascotas",
-  recibo: "🧾 *Boleta VetPro*\nN° {numero_boleta}\n\nCliente: {nombre_cliente}\nMascota: {nombre_mascota}\nFecha: {fecha}\n\n💰 *Total: S/. {total}*\nMétodo: Yape ✅\n\nGracias por confiar en VetPro 🐾",
-  informe: "🏥 *Informe Médico — VetPro*\n\nPaciente: *{nombre_mascota}*\nDueño: {nombre_cliente}\nFecha: {fecha}\nVet.: {veterinario}\n\n🔍 *Diagnóstico:*\n{diagnostico}\n\n💊 Tratamiento indicado por el veterinario.\n\nVetPro 🐾",
-  historial: "📋 *Historial Clínico — VetPro*\n\nPaciente: *{nombre_mascota}*\nDueño: {nombre_cliente}\n\n🗓️ *Últimas consultas:*\n• Consulta reciente ✅\n• Vacunas al día ✅\n\nPara historial completo, visítanos o escríbenos.\n\nVetPro 🐾",
-  vacuna: "💉 *Alerta de Vacuna — VetPro*\n\nHola {nombre_cliente} 👋\n\nLa vacuna de *{nombre_mascota}* vence pronto:\n🗓️ *Vencimiento:* {proxima_vacuna}\n💉 {tipo_vacuna}\n\n👉 Agenda su cita respondiendo este mensaje.\n\nVetPro 🐾",
-  recordatorio: "⏰ *Recordatorio VetPro*\n\nHola {nombre_cliente} 👋\n\nMañana es la cita de *{nombre_mascota}*:\n📅 {fecha} a las {hora}\n👨‍⚕️ {veterinario}\n\n¿Confirmas tu asistencia?\nResponde *SÍ* o *NO*\n\nVetPro 🐾",
-  receta: "💊 *Receta Médica — VetPro*\n\nPaciente: *{nombre_mascota}*\nVet.: {veterinario}\nFecha: {fecha}\n\n📋 *Medicamentos:*\n• Amoxicilina 500mg — 1 comp c/12h x 7 días\n• Meloxicam — 1 vez al día con comida x 5 días\n\nVetPro 🐾",
-  personalizado: ""
-};
+<?php
+// Nombre de la clínica (para el marcador {clinica})
+$NC = $nombre_clinica;
+// Plantillas por defecto. Usan el marcador {clinica}, que se reemplaza dinámicamente
+// por el nombre actual de la veterinaria (así sigue actualizándose aunque se guarde).
+$tpl_default = [
+  'cita'        => "🐾 *{clinica}*\n\nHola {nombre_cliente} 👋\n\nTe confirmamos tu cita:\n\n📅 *Fecha:* {fecha}\n🕐 *Hora:* {hora}\n🐶 *Paciente:* {nombre_mascota}\n👨‍⚕️ *Veterinario:* {veterinario}\n\nPor favor llega 10 min antes.\n_Responde si necesitas reprogramar._\n\n✅ {clinica} — Cuidamos a tus mascotas",
+  'recibo'      => "🧾 *Boleta {clinica}*\nN° {numero_boleta}\n\nCliente: {nombre_cliente}\nMascota: {nombre_mascota}\nFecha: {fecha}\n\n💰 *Total: S/. {total}*\nMétodo: Yape ✅\n\nGracias por confiar en {clinica} 🐾",
+  'informe'     => "🏥 *Informe Médico — {clinica}*\n\nPaciente: *{nombre_mascota}*\nDueño: {nombre_cliente}\nFecha: {fecha}\nVet.: {veterinario}\n\n🔍 *Diagnóstico:*\n{diagnostico}\n\n💊 Tratamiento indicado por el veterinario.\n\n{clinica} 🐾",
+  'historial'   => "📋 *Historial Clínico — {clinica}*\n\nPaciente: *{nombre_mascota}*\nDueño: {nombre_cliente}\n\n🗓️ *Últimas consultas:*\n• Consulta reciente ✅\n• Vacunas al día ✅\n\nPara historial completo, visítanos o escríbenos.\n\n{clinica} 🐾",
+  'vacuna'      => "💉 *Alerta de Vacuna — {clinica}*\n\nHola {nombre_cliente} 👋\n\nLa vacuna de *{nombre_mascota}* vence pronto:\n🗓️ *Vencimiento:* {proxima_vacuna}\n💉 {tipo_vacuna}\n\n👉 Agenda su cita respondiendo este mensaje.\n\n{clinica} 🐾",
+  'recordatorio'=> "⏰ *Recordatorio {clinica}*\n\nHola {nombre_cliente} 👋\n\nMañana es la cita de *{nombre_mascota}*:\n📅 {fecha} a las {hora}\n👨‍⚕️ {veterinario}\n\n¿Confirmas tu asistencia?\nResponde *SÍ* o *NO*\n\n{clinica} 🐾",
+  'receta'      => "💊 *Receta Médica — {clinica}*\n\nPaciente: *{nombre_mascota}*\nVet.: {veterinario}\nFecha: {fecha}\n\n📋 *Medicamentos:*\n• Amoxicilina 500mg — 1 comp c/12h x 7 días\n• Meloxicam — 1 vez al día con comida x 5 días\n\n{clinica} 🐾",
+  'personalizado'=> "",
+];
+// Aplicar encima las plantillas guardadas por el usuario
+$tpl_final = $tpl_default;
+foreach ($tpl_guardadas as $t => $v) { $tpl_final[$t] = $v; }
+?>
+// Plantillas por defecto (con el nombre de tu veterinaria) — referencia para "Restablecer"
+var TEMPLATES_DEFAULT = <?= json_encode($tpl_default, JSON_UNESCAPED_UNICODE) ?>;
+// Plantillas activas (incluye tus versiones guardadas)
+var TEMPLATES = <?= json_encode($tpl_final, JSON_UNESCAPED_UNICODE) ?>;
+
 
 var EXTRA_FIELDS = {
   cita: '<div class="form-row mb-2"><div class="form-group"><label class="form-label">Fecha cita</label><input class="form-input" id="ef-fecha" type="date" oninput="updatePreview()"></div><div class="form-group"><label class="form-label">Hora</label><input class="form-input" id="ef-hora" type="time" value="09:00" oninput="updatePreview()"></div></div><div class="form-row mb-2"><div class="form-group"><label class="form-label">Veterinario</label><select class="form-input" id="ef-vet" onchange="updatePreview()"><?php foreach($veterinarios as $v): ?><option><?= clean($v['nombre']) ?></option><?php endforeach; ?></select></div><div class="form-group"><label class="form-label">Tipo atención</label><select class="form-input" id="ef-tipo" onchange="updatePreview()"><option>Consulta general</option><option>Vacuna</option><option>Control</option><option>Cirugía</option><option>Baño</option></select></div></div>',
@@ -352,6 +433,8 @@ function resolveMsg() {
   var pv = getV('ef-proxima');
   var fmtPv = pv ? new Date(pv+'T12:00').toLocaleDateString('es-PE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '[Fecha]';
   return tpl
+    .replace(/\{clinica\}/g, WA_CLINICA)
+    .replace(/\{veterinaria\}/g, WA_CLINICA)
     .replace(/\{nombre_cliente\}/g, cName)
     .replace(/\{nombre_mascota\}/g, mName)
     .replace(/\{fecha\}/g, fmtDate)
@@ -427,6 +510,41 @@ function guardarLog(silent) {
     headers:{'Content-Type':'application/x-www-form-urlencoded'},
     body: new URLSearchParams({action:'log',cliente_id:cid,mascota_id:mid||0,tipo:currentType,mensaje:msg,telefono:tel,url:url})
   }).then(() => { if(!silent) showOk('✓ Registrado en historial'); });
+}
+
+// Guardar la plantilla editada de forma permanente (por tipo de mensaje)
+function guardarPlantilla() {
+  var texto = document.getElementById('msg-text').value;
+  if (!currentType) { alert('Selecciona primero un tipo de mensaje.'); return; }
+  fetch('?p=whatsapp', {
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body: new URLSearchParams({action:'save_template', tipo:currentType, mensaje:texto})
+  }).then(r=>r.json()).then(function(d){
+    if (d && d.ok) {
+      TEMPLATES[currentType] = texto;  // reflejar el cambio en memoria
+      showOk('✓ Plantilla guardada');
+    } else {
+      showOk('⚠️ No se pudo guardar');
+    }
+  }).catch(function(){ showOk('⚠️ No se pudo guardar'); });
+}
+
+// Restablecer la plantilla actual a su texto por defecto
+function resetPlantilla() {
+  if (!currentType) return;
+  if (!confirm('¿Restablecer este mensaje a su versión original? Se perderá tu texto guardado para este tipo.')) return;
+  fetch('?p=whatsapp', {
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body: new URLSearchParams({action:'reset_template', tipo:currentType})
+  }).then(r=>r.json()).then(function(){
+    var def = TEMPLATES_DEFAULT[currentType] || '';
+    TEMPLATES[currentType] = def;
+    document.getElementById('msg-text').value = def;
+    updatePreview();
+    showOk('✓ Plantilla restablecida');
+  });
 }
 
 function showOk(txt) {

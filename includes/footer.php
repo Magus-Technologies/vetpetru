@@ -376,5 +376,100 @@ document.addEventListener('click',function(e){
   if(w&&!w.contains(e.target)){var d=document.getElementById('gsDropdown');if(d)d.style.display='none';}
 });
 </script>
+
+<!-- ══ DICTADO POR VOZ (Web Speech API) — global para todos los formularios ══ -->
+<script>
+(function(){
+  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) return; // navegador sin soporte → no se muestran micrófonos (no rompe nada)
+
+  var _activo = null;   // textarea que se está dictando ahora
+  var _rec = null;
+  var _baseText = '';   // texto que ya había antes de empezar a dictar
+
+  function crearMic(ta){
+    // Evitar duplicados y campos que no queremos
+    if (ta.dataset.voiceReady === '1') return;
+    if (ta.dataset.noVoice === '1') return;
+    ta.dataset.voiceReady = '1';
+
+    // Envolver el textarea en un contenedor relativo para posicionar el botón
+    var wrap = document.createElement('div');
+    wrap.style.cssText = 'position:relative;display:block';
+    ta.parentNode.insertBefore(wrap, ta);
+    wrap.appendChild(ta);
+    // dejar espacio para que el texto no quede debajo del botón
+    ta.style.paddingRight = '42px';
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'voz-mic-btn';
+    btn.title = 'Dictar por voz';
+    btn.innerHTML = '🎤';
+    btn.style.cssText = 'position:absolute;top:8px;right:8px;width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--bg2);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .15s;z-index:3;padding:0';
+    btn.onmouseover = function(){ if(_activo!==ta){ this.style.background='var(--primary-l)'; this.style.borderColor='var(--primary)'; } };
+    btn.onmouseout  = function(){ if(_activo!==ta){ this.style.background='var(--bg2)'; this.style.borderColor='var(--border)'; } };
+    btn.onclick = function(){ toggleDictado(ta, btn); };
+    wrap.appendChild(btn);
+  }
+
+  function detener(){
+    if (_rec) { try{ _rec.stop(); }catch(e){} }
+    if (_activo) {
+      var b = _activo.parentNode.querySelector('.voz-mic-btn');
+      if (b){ b.innerHTML='🎤'; b.style.background='var(--bg2)'; b.style.borderColor='var(--border)'; b.style.animation=''; }
+    }
+    _activo = null; _rec = null;
+  }
+
+  function toggleDictado(ta, btn){
+    // Si ya estaba dictando este mismo campo → detener
+    if (_activo === ta) { detener(); return; }
+    // Si estaba dictando otro → detener primero
+    if (_activo) detener();
+
+    _rec = new SpeechRec();
+    _rec.lang = 'es-PE';
+    _rec.continuous = true;
+    _rec.interimResults = true;
+    _baseText = ta.value ? (ta.value.trim() + ' ') : '';
+
+    _rec.onresult = function(e){
+      var txt = '';
+      for (var i=0; i<e.results.length; i++) txt += e.results[i][0].transcript;
+      ta.value = _baseText + txt;
+      ta.dispatchEvent(new Event('input',{bubbles:true}));
+    };
+    _rec.onerror = function(e){
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        alert('Necesito permiso para usar el micrófono. Actívalo en el candado 🔒 de la barra de direcciones.');
+      }
+      detener();
+    };
+    _rec.onend = function(){ if(_activo===ta) detener(); };
+
+    try {
+      _rec.start();
+      _activo = ta;
+      btn.innerHTML = '⏹';
+      btn.style.background = '#fee2e2';
+      btn.style.borderColor = '#ef4444';
+      btn.style.animation = 'vozPulse 1.2s infinite';
+    } catch(err){ detener(); }
+  }
+
+  // Estilo de pulso para el botón activo
+  var st = document.createElement('style');
+  st.textContent = '@keyframes vozPulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,.4)}50%{box-shadow:0 0 0 5px rgba(239,68,68,0)}}';
+  document.head.appendChild(st);
+
+  // Aplicar a todos los textarea relevantes al cargar
+  function init(){
+    document.querySelectorAll('textarea.form-input, textarea[data-voice="1"]').forEach(crearMic);
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
+})();
+</script>
 </body>
 </html>

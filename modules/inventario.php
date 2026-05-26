@@ -40,6 +40,31 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     }
     $msg='success_prov';
   }
+
+  // Editar producto
+  if ($pa==='edit_producto' && can('inventario','editar')) {
+    $id = (int)($_POST['id']??0);
+    $fields = ['nombre','presentacion','laboratorio','lote','stock','stock_minimo',
+               'precio_costo','precio_venta','fecha_vencimiento','categoria_id'];
+    $data=[]; foreach($fields as $f) $data[$f]=trim($_POST[$f]??'')?:null;
+    $data['id'] = $id;
+    $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
+    try {
+        $db->prepare("UPDATE productos SET $sets WHERE id=:id")->execute($data);
+        $msg='edit_ok';
+    } catch(Exception $e){ $msg='edit_err'; }
+    $tab='productos';
+  }
+
+  // Soft delete producto (activo=0, no borra de BD)
+  if ($pa==='delete_producto' && can('inventario','eliminar')) {
+    $id = (int)($_POST['id']??0);
+    try {
+        $db->prepare("UPDATE productos SET activo=0 WHERE id=?")->execute([$id]);
+        $msg='delete_ok';
+    } catch(Exception $e){ $msg='delete_err'; }
+    $tab='productos';
+  }
 }
 
 // Filtro sede para inventario
@@ -119,6 +144,9 @@ try { $kardex=$db->query("SELECT k.*,p.nombre as producto,u.nombre as usuario FR
 
 <?php elseif($tab==='productos'): ?>
 <!-- ── PRODUCTOS ── -->
+<?php if($msg==='edit_ok'): ?><div class="alert alert-success mb-3">✅ Producto actualizado correctamente.</div><?php endif; ?>
+<?php if($msg==='delete_ok'): ?><div class="alert alert-success mb-3">✅ Producto desactivado del inventario.</div><?php endif; ?>
+
 <div class="flex items-center justify-between mb-3">
   <div class="page-title">Inventario de Productos</div>
   <a href="<?= BASE_URL ?>/index.php?p=farmacia&action=nueva" class="btn btn-primary">＋ Agregar Producto</a>
@@ -126,7 +154,7 @@ try { $kardex=$db->query("SELECT k.*,p.nombre as producto,u.nombre as usuario FR
 <div class="card" style="padding:0">
   <div class="table-wrap">
     <table class="vtable">
-      <thead><tr><th>Producto</th><th>Categoría</th><th>Stock</th><th>Mínimo</th><th>Costo</th><th>Venta</th><th>Vencimiento</th><th>Estado</th></tr></thead>
+      <thead><tr><th>Producto</th><th>Categoría</th><th>Stock</th><th>Mínimo</th><th>Costo</th><th>Venta</th><th>Vencimiento</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody>
         <?php foreach($productos_inventario as $p):
           $crit=$p['stock']<=$p['stock_minimo']/2;
@@ -138,7 +166,7 @@ try { $kardex=$db->query("SELECT k.*,p.nombre as producto,u.nombre as usuario FR
           <td><div class="td-main"><?= clean($p['nombre']) ?></div><div class="text-xs text-muted"><?= clean($p['presentacion']??'') ?> · <?= clean($p['lote']??'') ?></div></td>
           <td><span class="badge b-accent"><?= clean($p['cat_nombre']??'—') ?></span></td>
           <td>
-            <div class="font-bold <?= $crit?'color-danger':($bajo?'':'') ?>" style="color:<?= $crit?'var(--danger)':($bajo?'var(--warning)':'var(--text)') ?>"><?= $p['stock'] ?></div>
+            <div class="font-bold" style="color:<?= $crit?'var(--danger)':($bajo?'var(--warning)':'var(--text)') ?>"><?= $p['stock'] ?></div>
             <div class="progress-bar mt-1" style="width:60px"><div class="progress-fill" style="width:<?= $pct ?>%;background:<?= $crit?'var(--danger)':($bajo?'var(--warning)':'var(--primary)') ?>"></div></div>
           </td>
           <td class="text-muted"><?= $p['stock_minimo'] ?></td>
@@ -146,12 +174,94 @@ try { $kardex=$db->query("SELECT k.*,p.nombre as producto,u.nombre as usuario FR
           <td class="font-semi" style="color:var(--success)">S/. <?= number_format($p['precio_venta'],2) ?></td>
           <td class="<?= $venc?'color-danger':'' ?>"><?= $p['fecha_vencimiento']?date('d/m/Y',strtotime($p['fecha_vencimiento'])):'—' ?></td>
           <td><span class="badge <?= $crit?'b-danger':($bajo?'b-warning':'b-success') ?>"><?= $crit?'Crítico':($bajo?'Bajo':'OK') ?></span></td>
+          <td>
+            <div class="flex gap-1">
+              <button onclick="editarProducto(<?= htmlspecialchars(json_encode($p)) ?>)"
+                      class="btn btn-xs btn-ghost" title="Editar">✏️ Editar</button>
+              <form method="POST" style="display:inline"
+                    onsubmit="return confirm('¿Desactivar <?= addslashes(clean($p['nombre'])) ?>? Seguirá en la base de datos pero no aparecerá en el inventario.')">
+                <input type="hidden" name="action" value="delete_producto">
+                <input type="hidden" name="id" value="<?= $p['id'] ?>">
+                <button type="submit" class="btn btn-xs btn-ghost" style="color:var(--danger)" title="Desactivar">🗑️ Eliminar</button>
+              </form>
+            </div>
+          </td>
         </tr>
         <?php endforeach; ?>
+        <?php if(empty($productos_inventario)): ?>
+        <tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text3)">Sin productos en inventario</td></tr>
+        <?php endif; ?>
       </tbody>
     </table>
   </div>
 </div>
+
+<!-- Modal editar producto -->
+<div id="modal-edit-prod" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2000;align-items:center;justify-content:center" onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:var(--bg2);border-radius:16px;padding:28px;width:600px;max-width:96vw;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,.2)">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div style="font-size:16px;font-weight:700">✏️ Editar Producto</div>
+      <button onclick="document.getElementById('modal-edit-prod').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text3)">✕</button>
+    </div>
+    <form method="POST">
+      <input type="hidden" name="action" value="edit_producto">
+      <input type="hidden" name="id" id="ep-id">
+      <?php
+      $cats_inv=[];
+      try{$cats_inv=$db->query("SELECT id,nombre FROM categorias_producto ORDER BY nombre")->fetchAll();}catch(Exception $e){}
+      ?>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label required">Nombre</label><input class="form-input" name="nombre" id="ep-nombre" required></div>
+        <div class="form-group"><label class="form-label">Presentación</label><input class="form-input" name="presentacion" id="ep-presenta"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Laboratorio</label><input class="form-input" name="laboratorio" id="ep-lab"></div>
+        <div class="form-group"><label class="form-label">Lote</label><input class="form-input" name="lote" id="ep-lote"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label required">Stock actual</label><input class="form-input" type="number" name="stock" id="ep-stock" min="0" required></div>
+        <div class="form-group"><label class="form-label required">Stock mínimo</label><input class="form-input" type="number" name="stock_minimo" id="ep-stk-min" min="0" required></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label required">Precio costo S/.</label><input class="form-input" type="number" step="0.01" name="precio_costo" id="ep-costo" required></div>
+        <div class="form-group"><label class="form-label required">Precio venta S/.</label><input class="form-input" type="number" step="0.01" name="precio_venta" id="ep-venta" required></div>
+      </div>
+      <div class="form-row">
+        <div class="form-group"><label class="form-label">Categoría</label>
+          <select class="form-input" name="categoria_id" id="ep-cat">
+            <option value="">— Sin categoría —</option>
+            <?php foreach($cats_inv as $c): ?><option value="<?= $c['id'] ?>"><?= clean($c['nombre']) ?></option><?php endforeach; ?>
+          </select>
+        </div>
+        <div class="form-group"><label class="form-label">Fecha vencimiento</label><input class="form-input" type="date" name="fecha_vencimiento" id="ep-vence"></div>
+      </div>
+      <div class="flex gap-2 mt-3">
+        <button type="submit" class="btn btn-primary btn-lg" style="flex:1">💾 Guardar cambios</button>
+        <button type="button" onclick="document.getElementById('modal-edit-prod').style.display='none'" class="btn btn-ghost">Cancelar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function editarProducto(p) {
+  document.getElementById('ep-id').value      = p.id;
+  document.getElementById('ep-nombre').value  = p.nombre||'';
+  document.getElementById('ep-presenta').value= p.presentacion||'';
+  document.getElementById('ep-lab').value     = p.laboratorio||'';
+  document.getElementById('ep-lote').value    = p.lote||'';
+  document.getElementById('ep-stock').value   = p.stock||0;
+  document.getElementById('ep-stk-min').value = p.stock_minimo||0;
+  document.getElementById('ep-costo').value   = p.precio_costo||0;
+  document.getElementById('ep-venta').value   = p.precio_venta||0;
+  document.getElementById('ep-vence').value   = p.fecha_vencimiento||'';
+  var cat = document.getElementById('ep-cat');
+  for(var i=0;i<cat.options.length;i++){
+    cat.options[i].selected = (cat.options[i].value == p.categoria_id);
+  }
+  document.getElementById('modal-edit-prod').style.display='flex';
+}
+</script>
 
 <?php elseif($tab==='kardex'): ?>
 <!-- ── KARDEX ── -->

@@ -3,6 +3,11 @@ $page = 'calendario'; $pageTitle = 'Calendario';
 require_once __DIR__ . '/../includes/header.php';
 $db = getDB();
 
+// Zona horaria de Perú (evita que "Hoy" se corra de día por usar UTC del servidor)
+if (date_default_timezone_get() !== 'America/Lima') {
+    date_default_timezone_set('America/Lima');
+}
+
 // Citas del mes actual para el calendario
 $mes   = (int)($_GET['mes'] ?? date('n'));
 $anio  = (int)($_GET['anio'] ?? date('Y'));
@@ -176,9 +181,12 @@ $ei=['perro'=>'🐕','gato'=>'🐈','conejo'=>'🐰','ave'=>'🐦','reptil'=>'�
     ?>
     <div class="cal-grid">
       <?php
-      $celdas = 35; // 5 filas × 7
+      $celdas = 42; // 6 filas × 7 — cubre cualquier mes sin cortar días
+      // Si el último día del mes cae antes de la 6ª fila, no dibujamos esa fila vacía
+      $ultima_celda_mes = $inicio - 1 + $dias_en_mes; // índice $i del último día del mes
+      if ($ultima_celda_mes <= 35) $celdas = 35;
       for($i=1; $i<=$celdas; $i++):
-        $offset = $i - $inicio;
+        $offset = $i - $inicio + 1; // el día 1 cae justo en la columna de su día de semana
         $es_mes_actual = $offset >= 1 && $offset <= $dias_en_mes;
         $num = $es_mes_actual ? $offset : ($offset < 1 ? $dias_mes_ant + $offset : $offset - $dias_en_mes);
         $es_hoy = $es_mes_actual && $num==$hoy_num && $mes==$hoy_mes && $anio==$hoy_anio;

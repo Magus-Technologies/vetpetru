@@ -24,10 +24,10 @@ if ($__isLocal) {
 } else {
     // ════════ PRODUCCIÓN ════════
     define('DB_HOST', 'localhost');
-    define('DB_NAME', 'vetpro');
+    define('DB_NAME', 'vet_petru');
     define('DB_USER', 'root');
     define('DB_PASS', 'c4p1cu4$$');
-    define('BASE_URL', 'https://magus-ecommerce.com/vetpro');
+    define('BASE_URL', 'https://magus-ecommerce.com/vet_petru');
     define('APP_ENV',  'production');
     define('MIGRATIONS_TOKEN', 'CAMBIAR_POR_TOKEN_LARGO_Y_ALEATORIO');
 }
@@ -211,4 +211,19 @@ function formatDate($date) {
     $dias  = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
     $meses = ['','Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
     return $dias[date('w',$ts)] . ', ' . date('d',$ts) . ' de ' . $meses[(int)date('n',$ts)] . ' ' . date('Y',$ts);
+}
+function siguienteNumeroSerie(PDO $db, string $serie): int {
+    try {
+        $st = $db->prepare("SELECT COALESCE(MAX(numero),0)+1 FROM ventas WHERE serie=?");
+        $st->execute([$serie]);
+        $siguienteReal = (int)$st->fetchColumn();
+
+        $st = $db->prepare("SELECT valor FROM configuracion WHERE clave=?");
+        $st->execute(['correlativo_inicio_' . $serie]);
+        $inicio = (int)$st->fetchColumn();
+
+        return $inicio > 0 ? max($siguienteReal, $inicio) : $siguienteReal;
+    } catch (Exception $e) {
+        return 1;
+    }
 }

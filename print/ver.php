@@ -203,9 +203,10 @@ table.items tr:last-child td{border-bottom:none}
 
     <!-- TOTALES -->
     <div class="totales">
-      <div class="tot-row"><span>Subtotal:</span><span>S/. <?= number_format($v['subtotal'],2) ?></span></div>
+      <?php $aplica = !isset($v['aplica_igv']) || (int)$v['aplica_igv']===1; ?>
+      <div class="tot-row"><span><?= $aplica ? 'Op. Gravadas:' : 'Op. Inafectas:' ?></span><span>S/. <?= number_format($v['subtotal'],2) ?></span></div>
       <?php if(($v['descuento']??0)>0): ?><div class="tot-row"><span>Descuento:</span><span style="color:#dc2626">-S/. <?= number_format($v['descuento'],2) ?></span></div><?php endif; ?>
-      <div class="tot-row"><span>IGV (18%):</span><span>S/. <?= number_format($v['igv'],2) ?></span></div>
+      <?php if ($aplica): ?><div class="tot-row"><span>IGV (18%):</span><span>S/. <?= number_format($v['igv'],2) ?></span></div><?php endif; ?>
       <div class="tot-total"><span>Total:</span><span>S/. <?= number_format($v['total'],2) ?></span></div>
       <div class="metodo">Forma de pago: <?= $metodo_labels[$v['metodo_pago']]??strtoupper($v['metodo_pago']) ?></div>
     </div>

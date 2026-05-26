@@ -1,6 +1,7 @@
 <?php
 $page = 'configuracion'; $pageTitle = 'Configuración';
 require_once __DIR__ . '/../includes/header.php';
+require_once __DIR__ . '/../includes/config_sunat.php';
 if (!hasRole(['admin'])) {
     echo '<div class="alert alert-danger">🔒 Solo administradores.</div>';
     require_once __DIR__.'/../includes/footer.php'; exit;
@@ -65,12 +66,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             'serie_factura','serie_boleta','serie_ticket',
             'serie_nota_credito','serie_nota_debito'
         ];
+        $avisos = [];
         try {
             foreach ($series as $k) {
                 $v = strtoupper(trim($_POST[$k] ?? ''));
                 if (!$v) continue;
                 $db->prepare("INSERT INTO configuracion_sede (sede_id,clave,valor) VALUES (?,?,?) ON DUPLICATE KEY UPDATE valor=?")
                    ->execute([$sid, $k, $v, $v]);
+
+                // Correlativo inicial (para migración desde sistema anterior).
+                // Solo se acepta si es MAYOR al MAX(numero) ya emitido en `ventas`,
+                // porque SUNAT no permite saltar hacia atrás ni reusar correlativos.
+                $rawInicio = trim($_POST['correlativo_inicio_' . $k] ?? '');
+                if ($rawInicio !== '') {
+                    $inicio = (int)$rawInicio;
+                    $st = $db->prepare("SELECT COALESCE(MAX(numero),0) FROM ventas WHERE serie=?");
+                    $st->execute([$v]);
+                    $maxEmitido = (int)$st->fetchColumn();
+
+                    if ($inicio <= 0) {
+                        // Vacío/0 => quitar el override
+                        $db->prepare("DELETE FROM configuracion WHERE clave=?")
+                           ->execute(['correlativo_inicio_' . $v]);
+                    } elseif ($inicio <= $maxEmitido) {
+                        $avisos[] = "Serie $v: el próximo n° debe ser mayor a $maxEmitido (ya emitido). Se ignoró '$inicio'.";
+                    } else {
+                        $db->prepare("INSERT INTO configuracion (clave,valor) VALUES (?,?) ON DUPLICATE KEY UPDATE valor=?")
+                           ->execute(['correlativo_inicio_' . $v, $inicio, $inicio]);
+                    }
+                }
             }
             // Guardar también en tabla configuracion global (legacy para facturacion)
             // Solo si es la sede principal (sede 1) o si no hay config sede-específica
@@ -80,7 +104,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 if ($sf) $db->prepare("INSERT INTO configuracion (clave,valor) VALUES ('serie_factura',?) ON DUPLICATE KEY UPDATE valor=?")->execute([$sf,$sf]);
                 if ($sb) $db->prepare("INSERT INTO configuracion (clave,valor) VALUES ('serie_boleta',?) ON DUPLICATE KEY UPDATE valor=?")->execute([$sb,$sb]);
             }
-            $msg = '✅ Series de la sede actualizadas correctamente.';
+            if ($avisos) {
+                $msg = '⚠️ Series guardadas con observaciones: <br>• ' . implode('<br>• ', $avisos);
+                $msg_tipo = 'warning';
+            } else {
+                $msg = '✅ Series de la sede actualizadas correctamente.';
+            }
             $tab = 'series';
         } catch(Exception $e) { $msg='❌ Error: '.$e->getMessage(); $msg_tipo='danger'; }
     }
@@ -213,7 +242,27 @@ function getUltimoNum($db, $serie) {
 }
 // Versión limpia
 function ultimoNumSerie($db, $serie) {
-    try { $st=$db->prepare("SELECT COALESCE(MAX(numero),0) FROM ventas WHERE serie=?"); $st->execute([$serie]); return (int)$st->fetchColumn(); } catch(Exception $e){ return 0; }
+    try {
+        $st = $db->prepare("SELECT COALESCE(MAX(numero),0) FROM ventas WHERE serie=?");
+        $st->execute([$serie]);
+        $maxVentas = (int)$st->fetchColumn();
+
+        // Override para migración desde sistema anterior: si hay un "próximo n°" configurado,
+        // forzamos que ultimoNum = inicio - 1 (siempre que sea mayor al MAX emitido real).
+        $st = $db->prepare("SELECT valor FROM configuracion WHERE clave=?");
+        $st->execute(['correlativo_inicio_' . $serie]);
+        $inicio = (int)$st->fetchColumn();
+
+        return $inicio > 0 ? max($maxVentas, $inicio - 1) : $maxVentas;
+    } catch(Exception $e){ return 0; }
+}
+
+function correlativoInicio($db, $serie): int {
+    try {
+        $st = $db->prepare("SELECT valor FROM configuracion WHERE clave=?");
+        $st->execute(['correlativo_inicio_' . $serie]);
+        return (int)$st->fetchColumn();
+    } catch(Exception $e){ return 0; }
 }
 
 $logo_path = $cfg['logo_path'] ?? '';
@@ -368,9 +417,14 @@ document.head.appendChild(style);
         'serie_nota_debito'  => ['label'=>'N. Débito', 'icon'=>'🟥','desc'=>'Cobros adicionales'],
       ];
       foreach($tipos as $tipo_key => $tipo_info):
-        $serie_val = getSerieSede($series_sede, $cfg, $tipo_key, $sid);
-        $ultimo_num = ultimoNumSerie($db, $serie_val);
-        $siguiente  = $ultimo_num + 1;
+        $serie_val   = getSerieSede($series_sede, $cfg, $tipo_key, $sid);
+        $ultimo_num  = ultimoNumSerie($db, $serie_val);
+        $siguiente   = $ultimo_num + 1;
+        $st_max = $db->prepare("SELECT COALESCE(MAX(numero),0) FROM ventas WHERE serie=?");
+        $st_max->execute([$serie_val]);
+        $max_real    = (int)$st_max->fetchColumn();
+        $inicio_cfg  = correlativoInicio($db, $serie_val);
+        $forzado     = $inicio_cfg > 0 && $inicio_cfg > $max_real;
       ?>
       <div style="background:var(--bg3);border-radius:10px;padding:12px">
         <div style="font-size:11px;color:var(--text3);margin-bottom:4px"><?= $tipo_info['icon'] ?> <?= $tipo_info['label'] ?></div>
@@ -383,6 +437,18 @@ document.head.appendChild(style);
         <div style="font-size:11px;color:var(--text2);margin-top:4px">
           Último emitido: <strong style="color:var(--primary)"><?= $serie_val ?>-<?= str_pad($ultimo_num,5,'0',STR_PAD_LEFT) ?></strong>
           · Próximo: <strong><?= $serie_val ?>-<?= str_pad($siguiente,5,'0',STR_PAD_LEFT) ?></strong>
+          <?php if ($forzado): ?><span style="font-size:10px;background:rgba(245,158,11,.15);color:#b45309;padding:1px 6px;border-radius:6px;margin-left:4px" title="Correlativo inicial configurado manualmente">🔧 forzado</span><?php endif; ?>
+        </div>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:6px">
+          <label style="font-size:10px;color:var(--text3);white-space:nowrap" title="Para empresas que migran desde otro sistema. Debe ser mayor al último emitido.">Próximo n°:</label>
+          <input type="number"
+                 name="correlativo_inicio_<?= $tipo_key ?>"
+                 class="form-input"
+                 value="<?= $inicio_cfg > 0 ? $inicio_cfg : '' ?>"
+                 placeholder="<?= $siguiente ?>"
+                 min="<?= $max_real + 1 ?>"
+                 style="font-size:12px;padding:4px 8px;width:100px">
+          <span style="font-size:10px;color:var(--text3)">(dejar vacío = automático)</span>
         </div>
       </div>
       <?php endforeach; ?>
@@ -449,7 +515,6 @@ document.head.appendChild(style);
 <?php elseif($tab==='sunat'): ?>
 <!-- ═══ SUNAT ═══ -->
 <?php
-require_once __DIR__ . '/../includes/config_sunat.php';
 $cert_subido = sunatCertSubido();
 $cert_fecha  = sunatCertFecha();
 ?>

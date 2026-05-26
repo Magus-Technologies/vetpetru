@@ -12,6 +12,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         $fields = ['mascota_id','veterinario_id','tipo','fecha','hora','duracion_minutos','estado','motivo','notas'];
         $data = []; foreach ($fields as $f) $data[$f] = trim($_POST[$f] ?? '');
         $data['sede_id'] = getSede();
+        $es_nueva = !$id;
         if ($id) {
             $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
             $st = $db->prepare("UPDATE citas SET $sets WHERE id=:id"); $data['id'] = $id;
@@ -20,7 +21,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $pls  = implode(',', array_map(fn($f)=>":$f", array_merge($fields,['sede_id'])));
             $st = $db->prepare("INSERT INTO citas ($cols) VALUES ($pls)");
         }
-        $st->execute($data); $msg = 'success'; $action = 'list';
+        $st->execute($data);
+        if ($es_nueva) $id = (int)$db->lastInsertId();
+
+        // ── WhatsApp: confirmación automática al agendar una cita NUEVA ──
+        if ($es_nueva) {
+            $wa_log = function($txt){ @file_put_contents(__DIR__.'/../wa_debug.log', date('Y-m-d H:i:s')." | $txt\n", FILE_APPEND); };
+            try {
+                require_once __DIR__ . '/../includes/wa_notify.php';
+                // Datos para el mensaje
+                $info = $db->prepare("SELECT m.nombre AS mascota, u.nombre AS vet, c.nombre AS dueno, c.telefono
+                    FROM citas ci
+                    JOIN mascotas m ON m.id=ci.mascota_id
+                    JOIN usuarios u ON u.id=ci.veterinario_id
+                    JOIN clientes c ON c.id=m.cliente_id
+                    WHERE ci.id=?");
+                $info->execute([$id]);
+                if ($cita = $info->fetch()) {
+                    if (!empty($cita['telefono'])) {
+                        $cfg = $db->query("SELECT clave,valor FROM configuracion")->fetchAll(PDO::FETCH_KEY_PAIR);
+                        $clinica = trim($cfg['nombre_clinica'] ?? $cfg['clinica_nombre'] ?? 'VetPro') ?: 'VetPro';
+                        $texto = wa_msg_confirmacion($clinica, $cita['dueno'], $cita['mascota'], $data['fecha'], $data['hora'], $cita['vet']);
+                        $detalle_wa = '';
+                        $ok = wa_enviar($cita['telefono'], $texto, $detalle_wa); // si el micro está caído, no rompe nada
+                        $wa_log("cita #$id tel={$cita['telefono']} -> ".($ok?'OK ✅':'FALLÓ ❌').' | '.$detalle_wa.' | URL='.WA_MICRO_URL);
+                    } else {
+                        $wa_log("cita #$id -> SIN TELÉFONO en el cliente, no se envió");
+                    }
+                } else {
+                    $wa_log("cita #$id -> no se pudo leer datos de la cita");
+                }
+            } catch (Exception $e) {
+                $wa_log("cita #$id -> EXCEPCIÓN: ".$e->getMessage());
+            }
+        }
+
+        $msg = 'success'; $action = 'list';
     }
     if ($_POST['action'] === 'cambiar_estado') {
         $db->prepare("UPDATE citas SET estado=? WHERE id=?")->execute([$_POST['estado'], (int)$_POST['id']]);
@@ -38,13 +74,29 @@ if (in_array($action,['editar']) && isset($_GET['id'])) {
 $mascotas_sel = $db->query("SELECT m.id, CONCAT(m.nombre,' (',c.nombre,')') as label FROM mascotas m JOIN clientes c ON c.id=m.cliente_id WHERE m.estado='activo' ORDER BY m.nombre")->fetchAll();
 $vets_sel = $db->query("SELECT id,nombre FROM usuarios WHERE rol IN ('veterinario','admin') AND activo=1")->fetchAll();
 
+// ── Filtros de la lista ──────────────────────────────────────────────
+// Modos: 'dia' (un día), 'rango' (desde-hasta), 'todas' (todas las citas)
+$modo          = $_GET['modo'] ?? 'dia';
 $fecha_filtro  = $_GET['fecha'] ?? date('Y-m-d');
+$desde         = $_GET['desde'] ?? date('Y-m-d');
+$hasta         = $_GET['hasta'] ?? date('Y-m-d', strtotime('+30 days'));
 $vet_filtro    = $_GET['vet'] ?? '';
 $estado_filtro = $_GET['estado'] ?? '';
+$q_filtro      = trim($_GET['q'] ?? '');
+
 $where = "1=1"; $params = [];
-if ($fecha_filtro)  { $where .= " AND c.fecha=?";          $params[] = $fecha_filtro; }
-if ($vet_filtro)    { $where .= " AND c.veterinario_id=?";  $params[] = $vet_filtro; }
-if ($estado_filtro) { $where .= " AND c.estado=?";          $params[] = $estado_filtro; }
+if ($modo === 'todas') {
+    // sin filtro de fecha — todas las citas
+} elseif ($modo === 'rango') {
+    if ($desde) { $where .= " AND c.fecha>=?"; $params[] = $desde; }
+    if ($hasta) { $where .= " AND c.fecha<=?"; $params[] = $hasta; }
+} else { // 'dia'
+    if ($fecha_filtro) { $where .= " AND c.fecha=?"; $params[] = $fecha_filtro; }
+}
+if ($vet_filtro)    { $where .= " AND c.veterinario_id=?"; $params[] = $vet_filtro; }
+if ($estado_filtro) { $where .= " AND c.estado=?";         $params[] = $estado_filtro; }
+if ($q_filtro)      { $where .= " AND (m.nombre LIKE ? OR cl.nombre LIKE ? OR cl.telefono LIKE ?)";
+                      $lk = "%$q_filtro%"; $params[] = $lk; $params[] = $lk; $params[] = $lk; }
 try {
     $_r=$db->query("SHOW COLUMNS FROM `citas` LIKE 'sede_id'")->fetchAll();
     if(!empty($_r)) {
@@ -52,12 +104,14 @@ try {
     }
 } catch(Exception $e) {}
 
-$st = $db->prepare("SELECT c.*,m.nombre as mascota,m.especie,u.nombre as veterinario,cl.nombre as dueno,cl.telefono FROM citas c JOIN mascotas m ON m.id=c.mascota_id JOIN usuarios u ON u.id=c.veterinario_id JOIN clientes cl ON cl.id=m.cliente_id WHERE $where ORDER BY c.hora ASC");
+// En modo día se ordena solo por hora; en los demás, por fecha y luego hora
+$order = ($modo === 'dia') ? "c.hora ASC" : "c.fecha ASC, c.hora ASC";
+$st = $db->prepare("SELECT c.*,m.nombre as mascota,m.especie,u.nombre as veterinario,cl.nombre as dueno,cl.telefono FROM citas c JOIN mascotas m ON m.id=c.mascota_id JOIN usuarios u ON u.id=c.veterinario_id JOIN clientes cl ON cl.id=m.cliente_id WHERE $where ORDER BY $order");
 $st->execute($params); $citas = $st->fetchAll();
 
-$st2 = $db->prepare("SELECT estado,COUNT(*) as n FROM citas WHERE fecha=? GROUP BY estado");
-$st2->execute([$fecha_filtro]); $stats = [];
-foreach($st2->fetchAll() as $r) $stats[$r['estado']] = $r['n'];
+// Stats calculadas sobre las citas mostradas (cuadran con el filtro activo)
+$stats = [];
+foreach($citas as $c) { $stats[$c['estado']] = ($stats[$c['estado']] ?? 0) + 1; }
 
 $especie_icons = ['perro'=>'🐕','gato'=>'🐈','conejo'=>'🐰','ave'=>'🐦','reptil'=>'🦎','roedor'=>'🐭','otro'=>'🐾'];
 $tipo_labels   = ['consulta'=>'Consulta','vacuna'=>'Vacuna','control'=>'Control','cirugia'=>'Cirugía','bano'=>'Baño','grooming'=>'Grooming','emergencia'=>'Emergencia','hospitalizacion'=>'Hospitalización'];
@@ -149,13 +203,38 @@ document.addEventListener('DOMContentLoaded', function() {
 <div class="card mb-2" style="padding:14px 18px">
   <form method="GET" class="flex items-center gap-2" style="flex-wrap:wrap">
     <input type="hidden" name="p" value="citas">
-    <input class="form-input" type="date" name="fecha" value="<?= $fecha_filtro ?>" style="width:160px">
-    <select class="form-input" name="vet" style="width:180px"><option value="">Todos los vets</option><?php foreach($vets_sel as $v): ?><option value="<?= $v['id'] ?>" <?= $vet_filtro==$v['id']?'selected':'' ?>><?= clean($v['nombre']) ?></option><?php endforeach; ?></select>
+    <!-- Selector de modo de vista -->
+    <select class="form-input" name="modo" id="filtro-modo" style="width:150px" onchange="toggleFechas()">
+      <option value="dia"   <?= $modo==='dia'?'selected':'' ?>>📅 Un día</option>
+      <option value="rango" <?= $modo==='rango'?'selected':'' ?>>📆 Rango de fechas</option>
+      <option value="todas" <?= $modo==='todas'?'selected':'' ?>>📋 Todas las citas</option>
+    </select>
+    <!-- Campo de un día -->
+    <input class="form-input filtro-dia" type="date" name="fecha" value="<?= clean($fecha_filtro) ?>" style="width:160px;<?= $modo!=='dia'?'display:none':'' ?>">
+    <!-- Campos de rango -->
+    <span class="filtro-rango flex items-center gap-1" style="<?= $modo!=='rango'?'display:none':'' ?>">
+      <input class="form-input" type="date" name="desde" value="<?= clean($desde) ?>" style="width:150px" title="Desde">
+      <span class="text-muted" style="font-size:12px">a</span>
+      <input class="form-input" type="date" name="hasta" value="<?= clean($hasta) ?>" style="width:150px" title="Hasta">
+    </span>
+    <!-- Buscador -->
+    <input class="form-input" type="text" name="q" value="<?= clean($q_filtro) ?>" placeholder="🔍 Buscar mascota o cliente..." style="width:210px">
+    <select class="form-input" name="vet" style="width:170px"><option value="">Todos los vets</option><?php foreach($vets_sel as $v): ?><option value="<?= $v['id'] ?>" <?= $vet_filtro==$v['id']?'selected':'' ?>><?= clean($v['nombre']) ?></option><?php endforeach; ?></select>
     <select class="form-input" name="estado" style="width:150px"><option value="">Todos los estados</option><?php foreach(['pendiente','confirmada','atendida','cancelada','no_asistio'] as $e): ?><option value="<?= $e ?>" <?= $estado_filtro===$e?'selected':'' ?>><?= ucfirst(str_replace('_',' ',$e)) ?></option><?php endforeach; ?></select>
-    <button type="submit" class="btn">Filtrar</button>
+    <button type="submit" class="btn btn-primary">Filtrar</button>
     <a href="?p=citas" class="btn">Hoy</a>
+    <a href="?p=calendario" class="btn">📅 Calendario</a>
     <a href="?p=citas&action=nueva" class="btn btn-primary" style="margin-left:auto">+ Nueva Cita</a>
   </form>
+</div>
+<div class="mb-2 text-muted" style="font-size:13px;padding:0 4px">
+  <?php
+    if($modo==='todas')      echo '📋 Mostrando <strong>todas</strong> las citas';
+    elseif($modo==='rango')  echo '📆 Citas del <strong>'.date('d/m/Y',strtotime($desde)).'</strong> al <strong>'.date('d/m/Y',strtotime($hasta)).'</strong>';
+    else                     echo '📅 Citas del <strong>'.date('d/m/Y',strtotime($fecha_filtro)).'</strong>';
+    echo ' · '.count($citas).' cita'.(count($citas)!=1?'s':'');
+    if($q_filtro!=='') echo ' · búsqueda: "'.clean($q_filtro).'"';
+  ?>
 </div>
 <div class="card" style="padding:0">
   <div class="table-wrap">
@@ -168,7 +247,10 @@ document.addEventListener('DOMContentLoaded', function() {
           $wa_msg = "⏰ *Recordatorio VetPro*\n\nHola {$c['dueno']} 👋\n\nTe recordamos la cita de *{$c['mascota']}*:\n📅 ".date('d/m/Y',strtotime($c['fecha']))." a las ".substr($c['hora'],0,5)."\n👨‍⚕️ {$c['veterinario']}\n\n¿Confirmas? Responde SÍ o NO\n\nVetPro 🐾";
         ?>
         <tr>
-          <td class="td-main" style="font-size:15px;white-space:nowrap"><?= substr($c['hora'],0,5) ?></td>
+          <td class="td-main" style="font-size:15px;white-space:nowrap">
+            <?php if($modo!=='dia'): ?><div class="text-xs text-muted" style="font-weight:600"><?= date('d/m/Y',strtotime($c['fecha'])) ?></div><?php endif; ?>
+            <?= substr($c['hora'],0,5) ?>
+          </td>
           <td><div class="flex items-center gap-1"><span style="font-size:18px"><?= $especie_icons[$c['especie']]??'🐾' ?></span><div><div class="td-main"><?= clean($c['mascota']) ?></div><div class="text-xs text-muted"><?= $c['duracion_minutos'] ?>min</div></div></div></td>
           <td><div><?= clean($c['dueno']) ?></div><div class="text-xs text-muted"><?= clean($c['telefono']) ?></div></td>
           <td><span class="badge <?= $tipo_badge[$c['tipo']]??'b-gray' ?>"><?= $tipo_labels[$c['tipo']]??$c['tipo'] ?></span></td>
@@ -182,7 +264,7 @@ document.addEventListener('DOMContentLoaded', function() {
           </div></td>
         </tr>
         <?php endforeach; ?>
-        <?php if(empty($citas)): ?><tr><td colspan="7" class="text-center text-muted" style="padding:32px">No hay citas para esta fecha.</td></tr><?php endif; ?>
+        <?php if(empty($citas)): ?><tr><td colspan="7" class="text-center text-muted" style="padding:32px">No hay citas que coincidan con el filtro.</td></tr><?php endif; ?>
       </tbody>
     </table>
   </div>
@@ -191,6 +273,11 @@ document.addEventListener('DOMContentLoaded', function() {
 <script>
 function cambiarEstado(id, estado) {
   fetch('?p=citas',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'action=cambiar_estado&id='+id+'&estado='+estado});
+}
+function toggleFechas() {
+  var modo = document.getElementById('filtro-modo').value;
+  document.querySelectorAll('.filtro-dia').forEach(function(el){ el.style.display = (modo==='dia')?'':'none'; });
+  document.querySelectorAll('.filtro-rango').forEach(function(el){ el.style.display = (modo==='rango')?'':'none'; });
 }
 </script>
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

@@ -129,9 +129,16 @@ table.items td.right{text-align:right}
       </tr>
     </thead>
     <tbody>
-      <?php foreach($items as $i=>$it):
-        $base_u = round($it['precio_unitario']/1.18,4);
-        $igv_u  = round($it['precio_unitario']-$base_u,4);
+      <?php
+      $aplica_igv = !isset($v['aplica_igv']) || (int)$v['aplica_igv']===1;
+      foreach($items as $i=>$it):
+        if ($aplica_igv) {
+          $base_u = round($it['precio_unitario']/1.18, 4);
+          $igv_u  = round($it['precio_unitario'] - $base_u, 4);
+        } else {
+          $base_u = (float)$it['precio_unitario'];   // sin desglose
+          $igv_u  = 0.0;
+        }
       ?>
       <tr>
         <td class="num"><?= $i+1 ?></td>
@@ -173,11 +180,20 @@ table.items td.right{text-align:right}
       <?php endif; ?>
     </div>
     <table class="totales-tabla">
-      <tr><td>OP. GRAVADAS: S/</td><td><?= number_format($v['subtotal']-($v['descuento']??0),2) ?></td></tr>
-      <?php if(($v['descuento']??0)>0): ?><tr><td>DESCUENTO: S/</td><td>-<?= number_format($v['descuento'],2) ?></td></tr><?php endif; ?>
-      <tr><td>OP. EXONERADAS:</td><td>0.00</td></tr>
-      <tr><td>SUB TOTAL: S/</td><td><?= number_format($v['subtotal']-($v['descuento']??0),2) ?></td></tr>
-      <tr><td>IGV 18.0%: S/</td><td><?= number_format($v['igv'],2) ?></td></tr>
+      <?php if ($aplica_igv): ?>
+        <tr><td>OP. GRAVADAS: S/</td><td><?= number_format($v['subtotal']-($v['descuento']??0),2) ?></td></tr>
+        <?php if(($v['descuento']??0)>0): ?><tr><td>DESCUENTO: S/</td><td>-<?= number_format($v['descuento'],2) ?></td></tr><?php endif; ?>
+        <tr><td>OP. EXONERADAS:</td><td>0.00</td></tr>
+        <tr><td>OP. INAFECTAS:</td><td>0.00</td></tr>
+        <tr><td>SUB TOTAL: S/</td><td><?= number_format($v['subtotal']-($v['descuento']??0),2) ?></td></tr>
+        <tr><td>IGV 18.0%: S/</td><td><?= number_format($v['igv'],2) ?></td></tr>
+      <?php else: ?>
+        <tr><td>OP. GRAVADAS:</td><td>0.00</td></tr>
+        <tr><td>OP. EXONERADAS:</td><td>0.00</td></tr>
+        <tr><td>OP. INAFECTAS: S/</td><td><?= number_format($v['subtotal']-($v['descuento']??0),2) ?></td></tr>
+        <?php if(($v['descuento']??0)>0): ?><tr><td>DESCUENTO: S/</td><td>-<?= number_format($v['descuento'],2) ?></td></tr><?php endif; ?>
+        <tr><td>IGV: S/</td><td>0.00</td></tr>
+      <?php endif; ?>
       <tr class="total-fila"><td>TOTAL: S/</td><td><?= number_format($v['total'],2) ?></td></tr>
     </table>
   </div>

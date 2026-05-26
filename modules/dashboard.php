@@ -85,6 +85,30 @@ foreach ($ing_metodo as $row) {
 $hosp = [];
 try { $hosp = $db->query("SELECT h.*,m.nombre as mascota,m.especie FROM hospitalizacion h JOIN mascotas m ON m.id=h.mascota_id WHERE h.activo=1$sm ORDER BY FIELD(h.estado,'emergencia','critico','observacion','estable') LIMIT 3")->fetchAll(); } catch(Exception $e) {}
 
+// ── Datos para mini-tendencias (sparklines) de los últimos 7 días ──
+$spark_ingresos = array_values($dias_semana); // ya calculado arriba
+$spark_pacientes = []; $spark_citas = [];
+for ($i=6;$i>=0;$i--) {
+    $d = date('Y-m-d',strtotime("-$i days"));
+    try { $spark_pacientes[] = (int)$db->query("SELECT COUNT(DISTINCT mascota_id) FROM consultas WHERE DATE(fecha)='$d'")->fetchColumn(); } catch(Exception $e){ $spark_pacientes[]=0; }
+    try { $spark_citas[] = (int)$db->query("SELECT COUNT(*) FROM citas WHERE fecha='$d'$sc")->fetchColumn(); } catch(Exception $e){ $spark_citas[]=0; }
+}
+// Helper: genera un mini-gráfico SVG de línea (sparkline) a partir de un array de números
+if (!function_exists('sparkline_svg')) {
+  function sparkline_svg(array $vals, string $color='#10b981', int $w=52, int $h=22): string {
+    if (count($vals) < 2) $vals = array_pad($vals, 2, 0);
+    $max = max($vals); $min = min($vals); $range = ($max-$min) ?: 1;
+    $n = count($vals); $step = $w/($n-1); $pts = [];
+    foreach ($vals as $i=>$v) {
+      $x = round($i*$step,1);
+      $y = round($h - 3 - (($v-$min)/$range)*($h-6),1);
+      $pts[] = "$x,$y";
+    }
+    $poly = implode(' ',$pts);
+    return '<svg width="'.$w.'" height="'.$h.'" viewBox="0 0 '.$w.' '.$h.'" style="overflow:visible"><polyline points="'.$poly.'" fill="none" stroke="'.$color.'" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  }
+}
+
 $ei = ['perro'=>'🐕','gato'=>'🐈','conejo'=>'🐰','ave'=>'🐦','reptil'=>'🦎','roedor'=>'🐭','otro'=>'🐾'];
 $estado_cfg = [
     'pendiente'  =>['color'=>'#f59e0b','bg'=>'#fef3c7','label'=>'Pendiente'],
@@ -177,16 +201,15 @@ $tipo_icons = ['consulta'=>'🩺','vacuna'=>'💉','control'=>'🔄','cirugia'=>
 .quick-label { font-size:10px; font-weight:600; color:var(--text2); text-align:center; line-height:1.2; }
 
 /* Pacientes recientes */
-.pac-grid { display:grid; grid-template-columns:repeat(6,1fr); }
+.pac-grid { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; padding:12px; }
 .pac-item {
   display:flex; flex-direction:column; align-items:center; gap:7px;
-  padding:16px 8px; border-right:1px solid var(--border);
-  text-decoration:none; transition:background .12s; position:relative;
+  padding:14px 8px; border:1.5px solid var(--border); border-radius:14px;
+  text-decoration:none; transition:all .15s; position:relative;
 }
-.pac-item:last-child { border-right:none; }
-.pac-item:hover { background:var(--bg3); }
-.pac-photo { width:60px; height:60px; border-radius:12px; object-fit:cover; border:2px solid var(--border); }
-.pac-emoji { width:60px; height:60px; border-radius:12px; background:var(--primary-l); display:flex; align-items:center; justify-content:center; font-size:26px; }
+.pac-item:hover { box-shadow:0 3px 14px rgba(0,0,0,.08); transform:translateY(-1px); }
+.pac-photo { width:56px; height:56px; border-radius:12px; object-fit:cover; }
+.pac-emoji { width:56px; height:56px; border-radius:12px; background:var(--primary-l); display:flex; align-items:center; justify-content:center; font-size:26px; }
 .pac-actions { display:flex; gap:4px; margin-top:2px; }
 .pac-act-btn { width:22px; height:22px; border-radius:6px; border:1px solid var(--border); background:var(--bg2); display:flex; align-items:center; justify-content:center; font-size:11px; text-decoration:none; transition:all .12s; }
 .pac-act-btn:hover { background:var(--primary-l); border-color:var(--primary); }
@@ -212,7 +235,10 @@ $tipo_icons = ['consulta'=>'🩺','vacuna'=>'💉','control'=>'🔄','cirugia'=>
   <div class="kpi-card">
     <div class="kpi-icon blue">📅</div>
     <div class="flex-1">
-      <div class="kpi-val"><?= $citas_hoy ?></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+        <div class="kpi-val"><?= $citas_hoy ?></div>
+        <?= sparkline_svg($spark_citas, '#6366f1') ?>
+      </div>
       <div class="kpi-label">Citas de hoy</div>
       <div class="kpi-sub kpi-neutral">⏳ <?= $citas_pend ?> pendientes</div>
     </div>
@@ -221,7 +247,10 @@ $tipo_icons = ['consulta'=>'🩺','vacuna'=>'💉','control'=>'🔄','cirugia'=>
   <div class="kpi-card">
     <div class="kpi-icon green">🐾</div>
     <div class="flex-1">
-      <div class="kpi-val"><?= $pacientes_mes ?></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+        <div class="kpi-val"><?= $pacientes_mes ?></div>
+        <?= sparkline_svg($spark_pacientes, $delta_pac>=0?'#10b981':'#ef4444') ?>
+      </div>
       <div class="kpi-label">Pacientes atendidos</div>
       <div class="kpi-sub <?= $delta_pac>=0?'kpi-up':'kpi-dn' ?>">
         <?= $delta_pac>=0?'↑':'↓' ?> <?= abs($delta_pac) ?>% este mes
@@ -232,7 +261,10 @@ $tipo_icons = ['consulta'=>'🩺','vacuna'=>'💉','control'=>'🔄','cirugia'=>
   <div class="kpi-card">
     <div class="kpi-icon orange">💰</div>
     <div class="flex-1">
-      <div class="kpi-val">S/ <?= number_format($ingresos_hoy,0) ?></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:6px">
+        <div class="kpi-val">S/ <?= number_format($ingresos_hoy,0) ?></div>
+        <?= sparkline_svg($spark_ingresos, '#3b82f6') ?>
+      </div>
       <div class="kpi-label">Ingresos del día</div>
       <div class="kpi-sub kpi-neutral">Meta mes: S/ <?= number_format($ingresos_mes,0) ?></div>
     </div>
@@ -281,10 +313,10 @@ $tipo_icons = ['consulta'=>'🩺','vacuna'=>'💉','control'=>'🔄','cirugia'=>
       </div>
 
       <?php if(empty($citas)): ?>
-      <div style="padding:40px;text-align:center;color:var(--text3)">
-        <div style="font-size:32px;margin-bottom:8px;opacity:.4">📅</div>
-        <div style="font-size:13px">Sin citas programadas para hoy</div>
-        <a href="<?= BASE_URL ?>/index.php?p=citas&action=nueva" class="btn btn-xs btn-primary" style="margin-top:12px">Agendar cita</a>
+      <div style="padding:18px 20px;display:flex;align-items:center;justify-content:center;gap:10px;color:var(--text3)">
+        <span style="font-size:18px;opacity:.5">📭</span>
+        <span style="font-size:13px">Sin citas programadas para hoy</span>
+        <a href="<?= BASE_URL ?>/index.php?p=citas&action=nueva" class="btn btn-xs btn-primary" style="margin-left:4px">+ Agendar</a>
       </div>
       <?php else: ?>
       <?php foreach($citas as $c):
@@ -376,12 +408,14 @@ $tipo_icons = ['consulta'=>'🩺','vacuna'=>'💉','control'=>'🔄','cirugia'=>
           $foto_url = !empty($m['foto']) && file_exists(UPLOADS_PATH.'/'.$m['foto']) ? BASE_URL.'/public/uploads/'.$m['foto'] : null;
           $tel2 = preg_replace('/[^0-9]/','',ltrim($m['telefono']??'','+'));
           if(strlen($tel2)<11) $tel2='51'.$tel2;
+          $especie_color=['perro'=>'#10b981','gato'=>'#6366f1','conejo'=>'#f59e0b','ave'=>'#3b82f6','reptil'=>'#84cc16','roedor'=>'#f97316','otro'=>'#8b5cf6'];
+          $ec=$especie_color[$m['especie']]??'#10b981';
         ?>
-        <div class="pac-item">
+        <div class="pac-item" style="border-color:<?= $ec ?>">
           <?php if($foto_url): ?>
           <img src="<?= $foto_url ?>" class="pac-photo" alt="<?= clean($m['nombre']) ?>">
           <?php else: ?>
-          <div class="pac-emoji"><?= $ei[$m['especie']]??'🐾' ?></div>
+          <div class="pac-emoji" style="background:<?= $ec ?>18"><?= $ei[$m['especie']]??'🐾' ?></div>
           <?php endif; ?>
           <div>
             <div style="font-size:12px;font-weight:700;color:var(--text);text-align:center"><?= clean($m['nombre']) ?></div>
@@ -509,14 +543,14 @@ $tipo_icons = ['consulta'=>'🩺','vacuna'=>'💉','control'=>'🔄','cirugia'=>
 <!-- ══ GRÁFICAS REALES ══ -->
 <?php
 $ingresos_12 = [];
-for($i=11;$i>=0;$i--){
+for($i=5;$i>=0;$i--){
     $mes = date('Y-m', strtotime("-$i months"));
     $tot = 0;
     try { $tot=(float)$db->query("SELECT COALESCE(SUM(total),0) FROM ventas v WHERE DATE_FORMAT(v.fecha,'%Y-%m')='$mes' AND v.estado='pagado'$sv")->fetchColumn(); }catch(Exception $e){}
     $ingresos_12[$mes] = $tot;
 }
 $especies = [];
-try { $especies = $db->query("SELECT especie, COUNT(*) as n FROM mascotas m WHERE m.activo=1$sm GROUP BY especie ORDER BY n DESC")->fetchAll(); } catch(Exception $e) {}
+try { $especies = $db->query("SELECT especie, COUNT(*) as n FROM mascotas m WHERE m.estado='activo'$sm GROUP BY especie ORDER BY n DESC")->fetchAll(); } catch(Exception $e) {}
 $citas_estados = [];
 try { $citas_estados = $db->query("SELECT estado, COUNT(*) as n FROM citas c WHERE MONTH(c.fecha)=MONTH(CURDATE())$sc GROUP BY estado")->fetchAll(); } catch(Exception $e){}
 $citas_dow = [];
@@ -538,7 +572,7 @@ try {
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
         <div>
           <div style="font-size:13px;font-weight:700;color:var(--text)">💰 Ingresos mensuales</div>
-          <div style="font-size:11px;color:var(--text3)">Últimos 12 meses</div>
+          <div style="font-size:11px;color:var(--text3)">Últimos 6 meses</div>
         </div>
         <div style="text-align:right">
           <div style="font-size:16px;font-weight:800;color:var(--success)">S/ <?= number_format(array_sum($ingresos_12),0) ?></div>

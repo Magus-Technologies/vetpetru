@@ -1,5 +1,138 @@
 <?php
 $page = 'farmacia'; $pageTitle = 'Farmacia / Inventario';
+
+// ════════════════════════════════════════════════════════════════
+// IMPORTACIÓN / EXPORTACIÓN masiva de productos de farmacia
+// (mismo método robusto que Pet Shop: XML SpreadsheetML, abre en
+//  columnas en cualquier Excel sin importar la config regional)
+// ════════════════════════════════════════════════════════════════
+
+// Lectores de archivos (XLSX real, XML SpreadsheetML Excel 2003, CSV/TSV)
+if (!function_exists('fm_leer_excel_xml')) {
+function fm_leer_excel_xml($raw) {
+    $filas = [];
+    if (!function_exists('simplexml_load_string')) return $filas;
+    $prev = libxml_use_internal_errors(true);
+    $xml = simplexml_load_string($raw);
+    libxml_use_internal_errors($prev);
+    if (!$xml) return $filas;
+    $ns = $xml->getNamespaces(true);
+    $ssns = $ns['ss'] ?? 'urn:schemas-microsoft-com:office:spreadsheet';
+    foreach ($xml->xpath('//ss:Row') ?: [] as $row) {
+        $celdas = []; $colIdx = 0;
+        foreach ($row->children($ssns)->Cell as $cell) {
+            $attrs = $cell->attributes($ssns);
+            if (isset($attrs['Index'])) { $colIdx = ((int)$attrs['Index']) - 1; }
+            $val = '';
+            $data = $cell->children($ssns)->Data;
+            if ($data !== null && count($data)) $val = (string)$data;
+            $celdas[$colIdx] = $val; $colIdx++;
+        }
+        if ($celdas) { ksort($celdas); $filas[] = array_values($celdas); }
+    }
+    return $filas;
+}
+}
+if (!function_exists('fm_col_a_num')) {
+function fm_col_a_num($letras) {
+    $n = 0;
+    for ($i=0; $i<strlen($letras); $i++) { $n = $n*26 + (ord($letras[$i]) - 64); }
+    return $n - 1;
+}
+}
+if (!function_exists('fm_leer_xlsx')) {
+function fm_leer_xlsx($path) {
+    $filas = [];
+    if (!class_exists('ZipArchive') || !function_exists('simplexml_load_string')) return $filas;
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) return $filas;
+    $shared = [];
+    if (($ss = $zip->getFromName('xl/sharedStrings.xml')) !== false) {
+        $p = libxml_use_internal_errors(true);
+        $sx = simplexml_load_string($ss);
+        libxml_use_internal_errors($p);
+        if ($sx) foreach ($sx->si as $si) {
+            $t = '';
+            if (isset($si->t)) $t = (string)$si->t;
+            elseif (isset($si->r)) foreach ($si->r as $r) $t .= (string)$r->t;
+            $shared[] = $t;
+        }
+    }
+    $sheet = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    if ($sheet === false) return $filas;
+    $p = libxml_use_internal_errors(true);
+    $x = simplexml_load_string($sheet);
+    libxml_use_internal_errors($p);
+    if (!$x) return $filas;
+    foreach ($x->sheetData->row as $row) {
+        $celdas = []; $colIdx = 0;
+        foreach ($row->c as $c) {
+            $ref = (string)($c['r'] ?? '');
+            if ($ref && preg_match('/^([A-Z]+)/', $ref, $m)) { $colIdx = fm_col_a_num($m[1]); }
+            $tipo = (string)($c['t'] ?? '');
+            $v = isset($c->v) ? (string)$c->v : '';
+            if ($tipo === 's') { $v = $shared[(int)$v] ?? ''; }
+            elseif ($tipo === 'inlineStr' && isset($c->is->t)) { $v = (string)$c->is->t; }
+            $celdas[$colIdx] = $v; $colIdx++;
+        }
+        if ($celdas) { ksort($celdas); $filas[] = array_values($celdas); }
+    }
+    return $filas;
+}
+}
+
+// ── EXPORTAR / PLANTILLA — XML SpreadsheetML (abre en columnas siempre) ──
+if (($_GET['action'] ?? '') === 'exportar' || ($_GET['action'] ?? '') === 'plantilla') {
+    require_once __DIR__ . '/../includes/config.php';
+    $db = getDB();
+    if (function_exists('requireLogin')) requireLogin();
+    $es_plantilla = ($_GET['action'] === 'plantilla');
+
+    $cols = ['Categoria','Nombre','Descripcion','Presentacion','Laboratorio','Codigo_Barras','Precio_Costo','Precio_Venta','Stock','Stock_Minimo','Lote','Fecha_Vencimiento'];
+    $fname = $es_plantilla ? 'plantilla_farmacia.xls' : 'farmacia_'.date('Y-m-d').'.xls';
+
+    $datos = [];
+    if ($es_plantilla) {
+        $datos[] = ['Antibióticos','Amoxicilina 500mg','Antibiótico de amplio espectro','Caja x 20 tabletas','Genfar','7501234560001','8.00','15.00','50','10','L2024A','2026-12-31'];
+        $datos[] = ['Antiparasitarios','Ivermectina 1%','Antiparasitario inyectable','Frasco 50ml','Bayer','7501234560002','25.00','45.00','30','8','L2024B','2027-06-30'];
+    } else {
+        try {
+            $where = 'p.activo=1';
+            try { $r=$db->query("SHOW COLUMNS FROM productos LIKE 'sede_id'")->fetchAll(); if(!empty($r)&&!verTodasSedes()){$where.=' AND p.sede_id='.getSede();} } catch(Exception $e){}
+            $datos = $db->query("SELECT COALESCE(c.nombre,'') as categoria, p.nombre, COALESCE(p.descripcion,''), COALESCE(p.presentacion,''), COALESCE(p.laboratorio,''), COALESCE(p.codigo_barras,''), p.precio_costo, p.precio_venta, p.stock, p.stock_minimo, COALESCE(p.lote,''), COALESCE(p.fecha_vencimiento,'') FROM productos p LEFT JOIN categorias_producto c ON c.id=p.categoria_id WHERE $where ORDER BY p.nombre")->fetchAll(PDO::FETCH_NUM);
+        } catch(Exception $e) { $datos = []; }
+    }
+
+    header('Content-Type: application/vnd.ms-excel; charset=UTF-8');
+    header('Content-Disposition: attachment; filename="'.$fname.'"');
+    header('Cache-Control: max-age=0');
+
+    $esc = function($v){ return htmlspecialchars((string)$v, ENT_QUOTES|ENT_XML1, 'UTF-8'); };
+    $celda = function($v, $col) use ($esc) {
+        $numericas = [6,7,8,9]; // precios y stock
+        if (in_array($col, $numericas, true) && is_numeric(str_replace(',','.',$v)) && $v !== '') {
+            return '<Cell><Data ss:Type="Number">'.$esc(str_replace(',','.',$v)).'</Data></Cell>';
+        }
+        return '<Cell><Data ss:Type="String">'.$esc($v).'</Data></Cell>';
+    };
+
+    echo '<?xml version="1.0" encoding="UTF-8"?>'."\n";
+    echo '<?mso-application progid="Excel.Sheet"?>'."\n";
+    echo '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">'."\n";
+    echo '<Worksheet ss:Name="Farmacia"><Table>'."\n";
+    echo '<Row>';
+    foreach ($cols as $c) echo '<Cell><Data ss:Type="String">'.$esc($c).'</Data></Cell>';
+    echo '</Row>'."\n";
+    foreach ($datos as $fila) {
+        echo '<Row>';
+        foreach (array_values($fila) as $i => $v) echo $celda($v, $i);
+        echo '</Row>'."\n";
+    }
+    echo '</Table></Worksheet></Workbook>';
+    exit;
+}
+
 require_once __DIR__ . '/../includes/header.php';
 $db = getDB();
 $_sid = getSede(); $_all = verTodasSedes();
@@ -13,6 +146,97 @@ $msg = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pa = $_POST['action'] ?? '';
+
+    // ── IMPORTAR productos de farmacia masivamente ──
+    if ($pa === 'importar_farmacia') {
+        $importados = 0; $omitidos = 0; $err_imp = '';
+        try {
+            if (empty($_FILES['archivo']['tmp_name'])) throw new Exception('No se recibió ningún archivo.');
+            $tmp = $_FILES['archivo']['tmp_name'];
+            $raw = file_get_contents($tmp);
+            $filas = [];
+            if (substr($raw,0,2) === 'PK') {
+                $filas = fm_leer_xlsx($tmp);
+            } elseif (stripos($raw,'<?xml') !== false || stripos($raw,'spreadsheet') !== false) {
+                $filas = fm_leer_excel_xml($raw);
+            } else {
+                $raw = preg_replace('/^\xEF\xBB\xBF/', '', $raw);
+                $sep = (substr_count($raw, "\t") > substr_count($raw, ',')) ? "\t" : ',';
+                foreach (preg_split('/\r\n|\r|\n/', $raw) as $linea) {
+                    if (trim($linea) === '') continue;
+                    $filas[] = str_getcsv($linea, $sep);
+                }
+            }
+            if (empty($filas)) throw new Exception('No se pudieron leer filas del archivo. Revisa el formato.');
+
+            $sede_destino = function_exists('getSede') ? getSede() : 1;
+
+            // Cache de categorías (nombre→id), para resolver/crear sin repetir queries
+            $cat_cache = [];
+            foreach ($db->query("SELECT id,nombre FROM categorias_producto")->fetchAll() as $c) {
+                $cat_cache[mb_strtolower(trim($c['nombre']))] = (int)$c['id'];
+            }
+            $get_cat_id = function($nombre) use (&$cat_cache, $db) {
+                $nombre = trim($nombre);
+                if ($nombre === '') return null;
+                $k = mb_strtolower($nombre);
+                if (isset($cat_cache[$k])) return $cat_cache[$k];
+                // Crear la categoría si no existe
+                $db->prepare("INSERT INTO categorias_producto (nombre) VALUES (?)")->execute([$nombre]);
+                $id = (int)$db->lastInsertId();
+                $cat_cache[$k] = $id;
+                return $id;
+            };
+
+            $ins = $db->prepare(
+                "INSERT INTO productos
+                 (categoria_id,nombre,descripcion,presentacion,laboratorio,codigo_barras,precio_costo,precio_venta,stock,stock_minimo,lote,fecha_vencimiento,sede_id)
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+            );
+
+            foreach ($filas as $f) {
+                $f = array_map(fn($v)=>trim((string)$v), $f);
+                $c0 = mb_strtolower($f[0] ?? '');
+                if ($c0==='' && empty(array_filter($f))) continue;
+                // Saltar encabezado/título
+                if (in_array($c0, ['categoria','categoría','plantilla','producto','productos','nombre']) && (stripos(($f[1]??''),'nombre')!==false || $c0==='categoria' || $c0==='categoría')) continue;
+
+                $nombre = $f[1] ?? '';
+                if ($nombre === '') { $omitidos++; continue; }
+
+                $cat_id      = $get_cat_id($f[0] ?? '');
+                $descripcion = $f[2] ?? '';
+                $present     = $f[3] ?? '';
+                $laboratorio = $f[4] ?? '';
+                $cod_barras  = $f[5] ?? '';
+                $p_costo     = (float)str_replace([',','S/','s/',' '],['.','','',''], $f[6] ?? '0');
+                $p_venta     = (float)str_replace([',','S/','s/',' '],['.','','',''], $f[7] ?? '0');
+                $stock       = (int)($f[8] ?? 0);
+                $stock_min   = (int)($f[9] ?? 5);
+                $lote        = $f[10] ?? '';
+                // Normalizar fecha (acepta dd/mm/yyyy o yyyy-mm-dd)
+                $fv_raw = trim($f[11] ?? '');
+                $fecha_venc = null;
+                if ($fv_raw !== '') {
+                    if (preg_match('#^(\d{1,2})/(\d{1,2})/(\d{4})$#', $fv_raw, $m)) {
+                        $fecha_venc = sprintf('%04d-%02d-%02d', $m[3], $m[2], $m[1]);
+                    } elseif (preg_match('#^\d{4}-\d{1,2}-\d{1,2}#', $fv_raw)) {
+                        $fecha_venc = substr($fv_raw,0,10);
+                    }
+                }
+
+                $ins->execute([$cat_id,$nombre,$descripcion,$present,$laboratorio,$cod_barras,$p_costo,$p_venta,$stock,$stock_min,$lote ?: null,$fecha_venc,$sede_destino]);
+                $importados++;
+            }
+        } catch(Exception $e) {
+            $err_imp = $e->getMessage();
+        }
+        $qs = 'p=farmacia&imp='.$importados.'&om='.$omitidos;
+        if ($err_imp) $qs .= '&imperr='.urlencode(substr($err_imp,0,200));
+        if (!headers_sent()) { header('Location: '.BASE_URL.'/index.php?'.$qs); exit; }
+        echo '<script>location.href='.json_encode(BASE_URL.'/index.php?'.$qs).';</script>'; exit;
+    }
+
     if ($pa === 'save') {
         $id = (int)($_POST['id']??0);
         $fields = ['categoria_id','nombre','descripcion','presentacion','laboratorio','stock','stock_minimo','precio_costo','precio_venta','lote','fecha_vencimiento'];
@@ -147,9 +371,20 @@ $total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM producto
     <select class="form-input" name="cat" style="width:160px"><option value="">Todas las categorías</option><?php foreach($categorias as $c): ?><option value="<?= $c['id'] ?>" <?= $cat_f==$c['id']?'selected':'' ?>><?= clean($c['nombre']) ?></option><?php endforeach; ?></select>
     <select class="form-input" name="alerta" style="width:160px"><option value="">Todos</option><option value="critico" <?= $alerta_f==='critico'?'selected':'' ?>>Stock crítico</option><option value="bajo" <?= $alerta_f==='bajo'?'selected':'' ?>>Bajo mínimo</option><option value="por_vencer" <?= $alerta_f==='por_vencer'?'selected':'' ?>>Por vencer (30d)</option></select>
     <button type="submit" class="btn">Filtrar</button>
-    <a href="?p=farmacia&action=nueva" class="btn btn-primary" style="margin-left:auto">+ Nuevo Producto</a>
+    <button type="button" class="btn btn-ghost" style="margin-left:auto" onclick="document.getElementById('modal-import-fm').style.display='flex'">📥 Importar</button>
+    <a href="?p=farmacia&action=exportar" class="btn btn-ghost">📤 Exportar</a>
+    <a href="?p=farmacia&action=nueva" class="btn btn-primary">+ Nuevo Producto</a>
   </form>
 </div>
+
+<?php if (isset($_GET['imp'])): ?>
+<div class="card mb-2" style="padding:13px 16px;background:#f0fdf4;border-left:3px solid #10b981">
+  <div style="font-size:13px;color:#065f46">
+    ✅ Importación completada: <strong><?= (int)$_GET['imp'] ?></strong> producto(s) agregado(s)<?= (int)($_GET['om']??0) ? ', '.(int)$_GET['om'].' omitido(s) (sin nombre)' : '' ?>.
+    <?php if(!empty($_GET['imperr'])): ?><br><span style="color:#b91c1c">⚠️ <?= clean($_GET['imperr']) ?></span><?php endif; ?>
+  </div>
+</div>
+<?php endif; ?>
 
 <div class="card" style="padding:0">
   <div class="table-wrap">
@@ -189,4 +424,36 @@ $total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM producto
   </div>
 </div>
 <?php endif; ?>
+<!-- ══ Modal Importar productos de farmacia ══ -->
+<div id="modal-import-fm" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:1000;align-items:center;justify-content:center;padding:20px">
+  <div style="background:var(--bg2);border-radius:16px;max-width:540px;width:100%;padding:24px;max-height:90vh;overflow-y:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+      <div style="font-size:17px;font-weight:800;color:var(--text)">📥 Importar productos de farmacia</div>
+      <button onclick="document.getElementById('modal-import-fm').style.display='none'" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--text3)">×</button>
+    </div>
+    <div style="font-size:13px;color:var(--text3);margin-bottom:16px;line-height:1.6">
+      Sube un archivo <strong>Excel (.xlsx)</strong> o <strong>CSV</strong> con tus medicamentos. Acepta archivos exportados de otros sistemas.
+    </div>
+    <div style="background:var(--bg3);border-radius:10px;padding:12px 14px;margin-bottom:16px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:6px">📋 Columnas esperadas (en este orden):</div>
+      <div style="font-size:11px;color:var(--text3);line-height:1.7">
+        Categoría · Nombre · Descripción · Presentación · Laboratorio · Código de Barras · Precio Costo · Precio Venta · Stock · Stock Mínimo · Lote · Fecha Vencimiento
+      </div>
+      <div style="margin-top:10px">
+        <a href="?p=farmacia&action=plantilla" class="btn btn-ghost btn-xs">⬇️ Descargar plantilla de ejemplo</a>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px">Solo <strong>Nombre</strong> es obligatorio. La <strong>categoría</strong> se crea sola si no existe. La fecha admite formato dd/mm/aaaa o aaaa-mm-dd.</div>
+    </div>
+    <form method="POST" enctype="multipart/form-data" onsubmit="var b=this.querySelector('button[type=submit]');b.disabled=true;b.textContent='Importando...';">
+      <input type="hidden" name="action" value="importar_farmacia">
+      <input type="file" name="archivo" accept=".xlsx,.xls,.csv,.tsv,.xml" required
+             style="width:100%;padding:10px;border:2px dashed var(--border);border-radius:10px;font-size:13px;margin-bottom:16px;background:var(--bg3)">
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal-import-fm').style.display='none'">Cancelar</button>
+        <button type="submit" class="btn btn-primary">📥 Importar productos</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>

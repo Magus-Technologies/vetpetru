@@ -5,6 +5,56 @@ $db = getDB();
 $action = $_GET['action'] ?? 'list';
 $msg = '';
 
+// ─────────────────────────────────────────────────────────────
+// Tipos de vacuna gestionables (con eliminación lógica)
+// ─────────────────────────────────────────────────────────────
+try {
+    $db->exec("CREATE TABLE IF NOT EXISTS tipos_vacuna (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        nombre VARCHAR(100) NOT NULL,
+        estado ENUM('activo','suspendido') NOT NULL DEFAULT 'activo',
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+    // Sembrar con los tipos por defecto la primera vez
+    $cnt = (int)$db->query("SELECT COUNT(*) FROM tipos_vacuna")->fetchColumn();
+    if ($cnt === 0) {
+        $semilla = ['Antirrábica','Óctuple','Séxtuple','Triple Felina','Leucemia Felina','Parvovirus','Mixomatosis','Enfermedad de Newcastle','Otra'];
+        $ins = $db->prepare("INSERT INTO tipos_vacuna (nombre) VALUES (?)");
+        foreach ($semilla as $s) $ins->execute([$s]);
+    }
+} catch (Exception $e) {}
+
+// Acciones del gestor de tipos (POST)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array(($_POST['action']??''), ['tv_add','tv_edit'], true)) {
+    $nombre = trim($_POST['nombre'] ?? '');
+    if ($nombre !== '') {
+        if (($_POST['action']) === 'tv_add') {
+            // Evitar duplicados activos con el mismo nombre
+            $dup = $db->prepare("SELECT id FROM tipos_vacuna WHERE nombre=? AND estado='activo'");
+            $dup->execute([$nombre]);
+            if (!$dup->fetch()) {
+                $db->prepare("INSERT INTO tipos_vacuna (nombre,estado) VALUES (?,'activo')")->execute([$nombre]);
+            }
+        } else {
+            $db->prepare("UPDATE tipos_vacuna SET nombre=? WHERE id=?")->execute([$nombre, (int)($_POST['id']??0)]);
+        }
+    }
+    header('Location: ?p=vacunas&action=tipos'); exit;
+}
+// Suspender (eliminación lógica) / reactivar — vía GET
+if ($action === 'tv_suspender' && isset($_GET['id'])) {
+    $db->prepare("UPDATE tipos_vacuna SET estado='suspendido' WHERE id=?")->execute([(int)$_GET['id']]);
+    header('Location: ?p=vacunas&action=tipos'); exit;
+}
+if ($action === 'tv_reactivar' && isset($_GET['id'])) {
+    $db->prepare("UPDATE tipos_vacuna SET estado='activo' WHERE id=?")->execute([(int)$_GET['id']]);
+    header('Location: ?p=vacunas&action=tipos'); exit;
+}
+
+// Tipos activos (los que ve el cliente) y todos (para el gestor)
+$tipos_activos = $db->query("SELECT id,nombre FROM tipos_vacuna WHERE estado='activo' ORDER BY nombre")->fetchAll();
+$tipos_todos   = $db->query("SELECT id,nombre,estado FROM tipos_vacuna ORDER BY estado, nombre")->fetchAll();
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action']??'') === 'save') {
     $fields = ['mascota_id','veterinario_id','tipo_vacuna','laboratorio','lote','fecha_aplicacion','fecha_vencimiento','proxima_dosis','notas'];
     $data=[]; foreach($fields as $f) $data[$f] = trim($_POST[$f]??'') ?: null;
@@ -49,7 +99,67 @@ $especie_icons=['perro'=>'🐕','gato'=>'🐈','conejo'=>'🐰','ave'=>'🐦','r
 ?>
 <?php if($msg==='success'): ?><div class="alert alert-success mb-2">✅ Vacuna registrada correctamente.</div><?php endif; ?>
 
-<?php if($action==='nueva'): ?>
+<?php if($action==='tipos'):
+  $activos = array_filter($tipos_todos, fn($t)=>$t['estado']==='activo');
+  $suspendidos = array_filter($tipos_todos, fn($t)=>$t['estado']==='suspendido');
+?>
+<div class="card" style="max-width:620px">
+  <div class="sec-header">
+    <div class="sec-title">⚙️ Gestionar tipos de vacuna</div>
+    <a href="?p=vacunas&action=nueva" class="btn btn-sm">← Volver</a>
+  </div>
+
+  <!-- Agregar nuevo tipo -->
+  <form method="POST" style="display:flex;gap:8px;margin:14px 0 18px;align-items:flex-end">
+    <input type="hidden" name="action" value="tv_add">
+    <div class="form-group" style="flex:1;margin:0">
+      <label class="form-label">Nuevo tipo de vacuna</label>
+      <input class="form-input" name="nombre" placeholder="Ej: Bordetella" required>
+    </div>
+    <button type="submit" class="btn btn-primary">＋ Agregar</button>
+  </form>
+
+  <!-- Tipos activos -->
+  <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Tipos activos (<?= count($activos) ?>)</div>
+  <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:20px">
+    <?php if(empty($activos)): ?>
+      <div style="font-size:12px;color:var(--text3);padding:8px 0">No hay tipos activos. Agrega uno arriba.</div>
+    <?php else: foreach($activos as $t): ?>
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg3);border-radius:8px">
+      <form method="POST" style="display:flex;flex:1;gap:6px;align-items:center;margin:0">
+        <input type="hidden" name="action" value="tv_edit">
+        <input type="hidden" name="id" value="<?= $t['id'] ?>">
+        <input class="form-input" name="nombre" value="<?= clean($t['nombre']) ?>" style="flex:1;height:34px;font-size:13px">
+        <button type="submit" class="btn btn-sm" title="Guardar cambios">💾</button>
+      </form>
+      <a href="?p=vacunas&action=tv_suspender&id=<?= $t['id'] ?>"
+         onclick="return confirm('¿Eliminar este tipo de la lista? Quedará suspendido (no se borra de la base de datos) y dejará de aparecer al registrar vacunas.')"
+         class="btn btn-sm" style="color:var(--danger)" title="Eliminar (suspender)">🗑️</a>
+    </div>
+    <?php endforeach; endif; ?>
+  </div>
+
+  <!-- Tipos suspendidos -->
+  <?php if(!empty($suspendidos)): ?>
+  <div style="font-size:12px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Suspendidos (<?= count($suspendidos) ?>) — ocultos para el cliente</div>
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <?php foreach($suspendidos as $t): ?>
+    <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border:1px dashed var(--border);border-radius:8px;opacity:.75">
+      <span style="flex:1;font-size:13px;color:var(--text3);text-decoration:line-through"><?= clean($t['nombre']) ?></span>
+      <span class="badge b-gray">Suspendido</span>
+      <a href="?p=vacunas&action=tv_reactivar&id=<?= $t['id'] ?>" class="btn btn-sm" style="color:var(--primary)" title="Reactivar">↩️ Reactivar</a>
+    </div>
+    <?php endforeach; ?>
+  </div>
+  <?php endif; ?>
+
+  <div style="font-size:11px;color:var(--text3);margin-top:16px;line-height:1.5">
+    💡 Al eliminar un tipo, este se marca como <strong>suspendido</strong> en la base de datos
+    (no se borra). Las vacunas ya registradas con ese tipo conservan su información.
+  </div>
+</div>
+
+<?php elseif($action==='nueva'): ?>
 <div class="card" style="max-width:680px">
   <div class="sec-header"><div class="sec-title">Registrar Vacuna</div><a href="?p=vacunas" class="btn btn-sm">← Volver</a></div>
   <form method="POST">
@@ -67,9 +177,12 @@ $especie_icons=['perro'=>'🐕','gato'=>'🐈','conejo'=>'🐰','ave'=>'🐦','r
       </div>
     </div>
     <div class="form-row">
-      <div class="form-group"><label class="form-label">Tipo de vacuna *</label>
+      <div class="form-group"><label class="form-label">Tipo de vacuna *
+          <a href="?p=vacunas&action=tipos" style="font-size:11px;font-weight:600;color:var(--primary);text-decoration:none;margin-left:6px">⚙️ Gestionar</a>
+        </label>
         <select class="form-input" name="tipo_vacuna" required>
-          <?php foreach(['Antirrábica','Óctuple','Sépuple','Triple Felina','Leucemia Felina','Parvovirus','Mixomatosis','Enfermedad de Newcastle','Otra'] as $t): ?><option><?= $t ?></option><?php endforeach; ?>
+          <?php if(empty($tipos_activos)): ?><option value="">— Sin tipos, agrega uno en Gestionar —</option><?php endif; ?>
+          <?php foreach($tipos_activos as $t): ?><option value="<?= clean($t['nombre']) ?>"><?= clean($t['nombre']) ?></option><?php endforeach; ?>
         </select>
       </div>
       <div class="form-group"><label class="form-label">Laboratorio</label><input class="form-input" name="laboratorio" placeholder="Ej: Zoetis, Nobivac"></div>

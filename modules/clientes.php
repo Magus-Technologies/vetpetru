@@ -1,7 +1,98 @@
 <?php
 $page = 'clientes'; $pageTitle = 'Clientes';
+// ── MODO DIAGNÓSTICO TEMPORAL: agrega &debug=1 a la URL para ver errores ──
+if (isset($_GET['debug'])) {
+    ini_set('display_errors','1'); error_reporting(E_ALL);
+    register_shutdown_function(function(){
+        $e = error_get_last();
+        if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+            echo "<div style='background:#fee;border:2px solid #c00;padding:16px;margin:16px;font-family:monospace;font-size:13px;white-space:pre-wrap'>";
+            echo "<strong>⚠️ ERROR DETECTADO:</strong>\n\n";
+            echo "Mensaje: ".htmlspecialchars($e['message'])."\n";
+            echo "Archivo: ".htmlspecialchars($e['file'])."\n";
+            echo "Línea:   ".$e['line'];
+            echo "</div>";
+        }
+    });
+}
 require_once __DIR__ . '/../includes/header.php';
 $db = getDB();
+
+// ── Lectores de archivos para importación (declarados arriba para que estén
+//    disponibles antes del bloque que los usa) ──
+if (!function_exists('leer_excel_xml')) {
+function leer_excel_xml($raw) {
+    $filas = [];
+    if (!function_exists('simplexml_load_string')) return $filas;
+    $prev = libxml_use_internal_errors(true);
+    $xml = simplexml_load_string($raw);
+    libxml_use_internal_errors($prev);
+    if (!$xml) return $filas;
+    $ns = $xml->getNamespaces(true);
+    $ssns = $ns['ss'] ?? 'urn:schemas-microsoft-com:office:spreadsheet';
+    foreach ($xml->xpath('//ss:Row') ?: [] as $row) {
+        $celdas = []; $colIdx = 0;
+        foreach ($row->children($ssns)->Cell as $cell) {
+            $attrs = $cell->attributes($ssns);
+            if (isset($attrs['Index'])) { $colIdx = ((int)$attrs['Index']) - 1; }
+            $val = '';
+            $data = $cell->children($ssns)->Data;
+            if ($data !== null && count($data)) $val = (string)$data;
+            $celdas[$colIdx] = $val; $colIdx++;
+        }
+        if ($celdas) { ksort($celdas); $filas[] = array_values($celdas); }
+    }
+    return $filas;
+}
+}
+if (!function_exists('col_a_num')) {
+function col_a_num($letras) {
+    $n = 0;
+    for ($i=0; $i<strlen($letras); $i++) { $n = $n*26 + (ord($letras[$i]) - 64); }
+    return $n - 1;
+}
+}
+if (!function_exists('leer_xlsx')) {
+function leer_xlsx($path) {
+    $filas = [];
+    if (!class_exists('ZipArchive') || !function_exists('simplexml_load_string')) return $filas;
+    $zip = new ZipArchive();
+    if ($zip->open($path) !== true) return $filas;
+    $shared = [];
+    if (($ss = $zip->getFromName('xl/sharedStrings.xml')) !== false) {
+        $p = libxml_use_internal_errors(true);
+        $sx = simplexml_load_string($ss);
+        libxml_use_internal_errors($p);
+        if ($sx) foreach ($sx->si as $si) {
+            $t = '';
+            if (isset($si->t)) $t = (string)$si->t;
+            elseif (isset($si->r)) foreach ($si->r as $r) $t .= (string)$r->t;
+            $shared[] = $t;
+        }
+    }
+    $sheet = $zip->getFromName('xl/worksheets/sheet1.xml');
+    $zip->close();
+    if ($sheet === false) return $filas;
+    $p = libxml_use_internal_errors(true);
+    $x = simplexml_load_string($sheet);
+    libxml_use_internal_errors($p);
+    if (!$x) return $filas;
+    foreach ($x->sheetData->row as $row) {
+        $celdas = []; $colIdx = 0;
+        foreach ($row->c as $c) {
+            $ref = (string)($c['r'] ?? '');
+            if ($ref && preg_match('/^([A-Z]+)/', $ref, $m)) { $colIdx = col_a_num($m[1]); }
+            $tipo = (string)($c['t'] ?? '');
+            $v = isset($c->v) ? (string)$c->v : '';
+            if ($tipo === 's') { $v = $shared[(int)$v] ?? ''; }
+            elseif ($tipo === 'inlineStr' && isset($c->is->t)) { $v = (string)$c->is->t; }
+            $celdas[$colIdx] = $v; $colIdx++;
+        }
+        if ($celdas) { ksort($celdas); $filas[] = array_values($celdas); }
+    }
+    return $filas;
+}
+}
 
 $action = $_GET['action'] ?? 'list';
 $msg = '';
@@ -373,62 +464,84 @@ if (($_GET['action']??'') === 'exportar_excel') {
 
 // ── IMPORTAR EXCEL ──
 if (($_POST['action']??'') === 'importar_excel') {
+  try {
     $resultado = ['ok'=>0,'error'=>0,'errores'=>[]];
     if (!empty($_FILES['archivo_excel']['tmp_name'])) {
         $tmp = $_FILES['archivo_excel']['tmp_name'];
         $ext = strtolower(pathinfo($_FILES['archivo_excel']['name'], PATHINFO_EXTENSION));
         if (!in_array($ext, ['csv','xls','xlsx','txt'])) {
-            $msg = 'error:Formato no válido. Usa CSV o XLS.';
+            $msg = 'error:Formato no válido. Usa CSV, XLS o XLSX.';
         } else {
-            // Leer el archivo como texto (CSV/TSV)
-            $content = file_get_contents($tmp);
-            $content = mb_convert_encoding($content, 'UTF-8', 'UTF-8,ISO-8859-1,Windows-1252');
-            $content = ltrim($content, "\xEF\xBB\xBF"); // quitar BOM
-            $lines = preg_split('/\r\n|\r|\n/', trim($content));
             $sede_id_imp = getSede();
+            $raw = file_get_contents($tmp);
 
-            // Detectar separador
-            $sep = "\t";
-            if (substr_count($lines[0]??'', ',') > substr_count($lines[0]??'', "\t")) $sep = ',';
+            // ── Extraer filas como matriz, detectando el formato real del archivo ──
+            // (no importa la extensión: detectamos por el contenido)
+            $filas = [];
 
-            $header_skipped = false;
-            foreach ($lines as $i => $line) {
-                if (!trim($line)) continue;
-                $cols = str_getcsv($line, $sep);
-                // Saltar encabezados (si contiene "nombre" o "dni" o empieza con texto)
-                if (!$header_skipped) {
-                    $header_skipped = true;
-                    if (strtolower(trim($cols[0]??'')) === 'nombre' || strtolower(trim($cols[0]??'')) === 'exportación') continue;
-                    if (!is_numeric(substr(trim($cols[1]??''),0,3)) && trim($cols[0]) && !is_numeric(trim($cols[0]))) {
-                        // Parece encabezado — saltarlo
-                        continue;
-                    }
+            if (substr($raw,0,2) === "PK") {
+                // .xlsx real (es un ZIP). Extraemos sharedStrings + sheet1 con ZipArchive.
+                $filas = leer_xlsx($tmp);
+            } elseif (stripos($raw, '<?mso-application') !== false || stripos($raw, 'urn:schemas-microsoft-com:office:spreadsheet') !== false) {
+                // XML "SpreadsheetML" (Excel 2003 guardado como XML)
+                $filas = leer_excel_xml($raw);
+            } else {
+                // CSV / TSV / texto plano
+                $content = mb_convert_encoding($raw, 'UTF-8', 'UTF-8,ISO-8859-1,Windows-1252');
+                $content = ltrim($content, "\xEF\xBB\xBF");
+                $lines = preg_split('/\r\n|\r|\n/', trim($content));
+                $sep = "\t";
+                if (substr_count($lines[0]??'', ',') > substr_count($lines[0]??'', "\t")) $sep = ',';
+                foreach ($lines as $line) {
+                    if (trim($line)==='') continue;
+                    $filas[] = str_getcsv($line, $sep);
                 }
+            }
+
+            // ── Procesar las filas (común a todos los formatos) ──
+            foreach ($filas as $i => $cols) {
+                if (!is_array($cols)) continue;
                 $nombre = trim($cols[0]??'');
                 if (!$nombre || strlen($nombre) < 2) continue;
+                // Evitar que entren restos de etiquetas XML como dato
+                if ($nombre[0] === '<' || stripos($nombre,'xmlns')!==false || stripos($nombre,'<?')!==false) continue;
 
-                $dni    = trim($cols[1]??'');
-                $ruc    = trim($cols[2]??'');
-                $tel    = trim($cols[3]??'');
-                $email  = trim($cols[4]??'');
-                $dir    = trim($cols[5]??'');
-                $como   = trim($cols[6]??'');
-                $notas  = trim($cols[7]??'');
+                // ── Saltar filas de TÍTULO o ENCABEZADO (en cualquier posición) ──
+                $n0 = strtolower($nombre);
+                // 1) Título de la plantilla / exportación
+                if (strpos($n0,'plantilla') === 0 || strpos($n0,'exportaci') === 0) continue;
+                // 2) Fila de encabezado: la 1ª columna dice "nombre" y/o las demás
+                //    coinciden con los nombres de columna (dni, ruc, telefono...)
+                $c1 = strtolower(trim($cols[1]??''));
+                $c3 = strtolower(trim($cols[3]??''));
+                $es_encabezado = ($n0 === 'nombre' || $n0 === 'cliente')
+                    && (in_array($c1, ['dni','ruc',''], true) || in_array($c3, ['telefono','teléfono','celular',''], true));
+                if ($es_encabezado) continue;
+                // 3) Por si acaso: si la columna "nombre" dice literalmente "nombre"
+                if ($n0 === 'nombre') continue;
 
-                // Verificar duplicado por DNI o nombre+teléfono
+                $dni   = trim($cols[1]??'');
+                $ruc   = trim($cols[2]??'');
+                $tel   = trim($cols[3]??'');
+                $email = trim($cols[4]??'');
+                $dir   = trim($cols[5]??'');
+                $como  = trim($cols[6]??'');
+                $notas = trim($cols[7]??'');
+
+                // 'como_conocio' es un ENUM: normalizar para no romper la fila
+                $como_norm = strtolower(str_replace([' ','-'],'_',$como));
+                $mapa_como = ['internet'=>'google','web'=>'google','facebook'=>'redes_sociales',
+                              'instagram'=>'redes_sociales','tiktok'=>'redes_sociales','redes'=>'redes_sociales',
+                              'recomendado'=>'referido','recomendacion'=>'referido','amigo'=>'referido'];
+                if (isset($mapa_como[$como_norm])) $como_norm = $mapa_como[$como_norm];
+                if (!in_array($como_norm, ['referido','google','redes_sociales','otro'], true)) $como_norm = $como ? 'otro' : null;
+                $como = $como_norm;
+
+                // Duplicados por DNI o nombre+teléfono
                 $dup = false;
-                if ($dni) {
-                    $st=$db->prepare("SELECT id FROM clientes WHERE dni=? AND activo=1"); $st->execute([$dni]); if($st->fetch()) $dup=true;
-                }
-                if (!$dup && $nombre && $tel) {
-                    $st=$db->prepare("SELECT id FROM clientes WHERE nombre=? AND telefono=? AND activo=1"); $st->execute([$nombre,$tel]); if($st->fetch()) $dup=true;
-                }
-
-                if ($dup) {
-                    $resultado['errores'][] = "Fila ".($i+1).": '$nombre' ya existe (duplicado).";
-                    $resultado['error']++;
-                    continue;
-                }
+                if ($dni) { $st=$db->prepare("SELECT id FROM clientes WHERE dni=? AND activo=1"); $st->execute([$dni]); if($st->fetch()) $dup=true; }
+                if (!$dup && $nombre && $tel) { $st=$db->prepare("SELECT id FROM clientes WHERE nombre=? AND telefono=? AND activo=1"); $st->execute([$nombre,$tel]); if($st->fetch()) $dup=true; }
+                if ($dup) { $resultado['errores'][] = "Fila ".($i+1).": '$nombre' ya existe (duplicado)."; $resultado['error']++; continue; }
 
                 try {
                     $db->prepare("INSERT INTO clientes (nombre,dni,ruc,telefono,email,direccion,como_conocio,notas,sede_id,activo) VALUES (?,?,?,?,?,?,?,?,?,1)")
@@ -439,11 +552,39 @@ if (($_POST['action']??'') === 'importar_excel') {
                     $resultado['error']++;
                 }
             }
-            $msg = "import_ok:{$resultado['ok']}:{$resultado['error']}:" . implode('|', array_slice($resultado['errores'],0,5));
+
+            if ($resultado['ok'] === 0 && $resultado['error'] === 0) {
+                $msg = 'error:No se encontraron datos válidos en el archivo. Descarga la plantilla y úsala como base.';
+            } else {
+                $msg = "import_ok:{$resultado['ok']}:{$resultado['error']}:" . implode('|', array_slice($resultado['errores'],0,5));
+            }
         }
     } else {
         $msg = 'error:No se recibió ningún archivo.';
     }
+  } catch (\Throwable $e) {
+    // Nunca dejar pantalla en blanco: mostrar el motivo
+    $msg = 'error:No se pudo procesar el archivo. Para .xls (XML) o .xlsx tu servidor necesita las extensiones PHP "xml" y "zip". Mientras tanto, exporta tu archivo como CSV y vuelve a intentar. ('.$e->getMessage().')';
+  }
+
+  // ── POST-Redirect-GET: recargar la lista para que aparezcan los nuevos
+  //    clientes sin tener que refrescar a mano. El resultado viaja por la URL.
+  $msg_url = $msg;
+  if (strlen($msg_url) > 300) $msg_url = substr($msg_url, 0, 300); // URL corta
+  $redir = '?p=clientes&imp=' . urlencode($msg_url);
+  if (!headers_sent()) {
+      header('Location: ' . $redir);
+      exit;
+  } else {
+      // Si el header ya se envió, redirigir por JS (infalible)
+      echo '<script>window.location.href=' . json_encode($redir) . ';</script>';
+      exit;
+  }
+}
+
+// Recibir el resultado de la importación tras el redirect (GET)
+if (empty($msg) && isset($_GET['imp'])) {
+    $msg = $_GET['imp'];
 }
 
 // ── DESCARGAR PLANTILLA ──
@@ -460,7 +601,7 @@ if (($_GET['action']??'') === 'plantilla_excel') {
 
 <?php
 // Mostrar resultado de importación
-if (!empty($msg) && str_starts_with($msg,'import_ok:')) {
+if (!empty($msg) && strpos($msg,'import_ok:') === 0) {
     $parts = explode(':', $msg, 4);
     $ok_n = $parts[1]??0; $err_n = $parts[2]??0; $errs = $parts[3]??'';
 ?>
@@ -480,7 +621,7 @@ if (!empty($msg) && str_starts_with($msg,'import_ok:')) {
       <button type="submit" class="btn">Buscar</button>
     </form>
     <!-- Exportar -->
-    <a href="?p=clientes&action=exportar_excel" class="btn btn-sm btn-ghost" style="color:var(--success);border-color:var(--success)" title="Exportar clientes a Excel">
+    <a href="<?= BASE_URL ?>/api/clientes_excel.php?action=exportar" class="btn btn-sm btn-ghost" style="color:var(--success);border-color:var(--success)" title="Exportar clientes a Excel">
       📥 Exportar Excel
     </a>
     <!-- Importar -->
@@ -506,7 +647,7 @@ if (!empty($msg) && str_starts_with($msg,'import_ok:')) {
         Descarga la plantilla Excel, rellénala con tus clientes y súbela en el paso 2.
         Columnas: <code>Nombre · DNI · RUC · Teléfono · Email · Dirección · Cómo nos conoció · Notas</code>
       </div>
-      <a href="?p=clientes&action=plantilla_excel" class="btn btn-sm" style="color:var(--success);border-color:var(--success)">
+      <a href="<?= BASE_URL ?>/api/clientes_excel.php?action=plantilla" class="btn btn-sm" style="color:var(--success);border-color:var(--success)">
         ⬇️ Descargar plantilla
       </a>
     </div>

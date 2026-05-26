@@ -11,12 +11,13 @@ $allowed = [
   'farmacia','inventario',
   'facturacion','plantillas','caja','personal','reportes',
   'whatsapp','portal','buscar',
-  'ganado','permisos','calendario','sedes','compras','configuracion'
+  'ganado','permisos','calendario','sedes','compras','configuracion',
+  'whatsapp_conexion','reporte_pagos'
 ];
 if (!in_array($p, $allowed)) $p = 'dashboard';
 
 // Verificar permiso de acceso al módulo
-$modulos_sin_permiso = ['portal','buscar','evolucion']; // módulos sin restricción específica
+$modulos_sin_permiso = ['portal','buscar','evolucion','whatsapp_conexion']; // módulos sin restricción específica
 if (!in_array($p, $modulos_sin_permiso) && $p !== 'dashboard') {
     if (!canView($p)) {
         // Mostrar página de acceso denegado

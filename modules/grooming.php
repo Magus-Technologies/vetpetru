@@ -262,11 +262,19 @@ if (!$groom_sel && !empty($all_groomings)) {
 .gr-detail { overflow-y:auto; display:flex; flex-direction:column; }
 .gr-det-head { padding:20px 24px; border-bottom:1px solid var(--border); flex-shrink:0; }
 .gr-det-body { padding:20px 24px; flex:1; overflow-y:auto; }
-.gr-det-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:16px; }
-.gr-det-box { background:var(--bg3); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
-.gr-det-box-title { font-size:11px; font-weight:700; color:var(--text3); text-transform:uppercase; letter-spacing:.5px; margin-bottom:10px; display:flex; align-items:center; gap:5px; }
-.gr-det-row { display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border); font-size:12px; }
+.gr-det-grid { display:grid; grid-template-columns:1fr 1fr; gap:0; margin-bottom:16px; }
+.gr-det-grid > .gr-det-box:first-child { padding-right:28px; }
+.gr-det-grid > .gr-det-box:last-child { border-left:1px solid var(--border); padding-left:28px; }
+.gr-det-box { background:transparent; border:none; border-radius:0; padding:0; }
+.gr-det-box-title { font-size:12px; font-weight:800; color:var(--text2); text-transform:uppercase; letter-spacing:.5px; margin-bottom:12px; display:flex; align-items:center; gap:8px; }
+.gr-det-box-title::before { content:''; width:3px; height:14px; border-radius:2px; background:var(--gr-accent,var(--primary)); flex-shrink:0; }
+.gr-det-row { display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-bottom:1px solid var(--border); font-size:13px; }
 .gr-det-row:last-child { border-bottom:none; }
+@media(max-width:768px){
+  .gr-det-grid { grid-template-columns:1fr; gap:16px; }
+  .gr-det-grid > .gr-det-box:first-child { padding-right:0; }
+  .gr-det-grid > .gr-det-box:last-child { border-left:none; padding-left:0; }
+}
 .gr-det-lbl { color:var(--text3); font-weight:500; }
 .gr-det-val { color:var(--text); font-weight:600; text-align:right; max-width:160px; }
 .gr-estado-badge { display:inline-flex; align-items:center; gap:5px; padding:5px 14px; border-radius:999px; font-size:12px; font-weight:700; }
@@ -278,12 +286,11 @@ if (!$groom_sel && !empty($all_groomings)) {
 </style>
 
 <!-- Stats -->
-<div class="grid g4 mb-3">
-  <?php foreach(['programado'=>['icon'=>'📅','label'=>'Programados','c'=>'#dbeafe','tc'=>'#1e3a8a'],'en_proceso'=>['icon'=>'✂️','label'=>'En proceso','c'=>'#fef3c7','tc'=>'#78350f'],'completado'=>['icon'=>'✅','label'=>'Completados','c'=>'#d1fae5','tc'=>'#065f46'],'cancelado'=>['icon'=>'✕','label'=>'Cancelados','c'=>'#fee2e2','tc'=>'#7f1d1d']] as $k=>$v): ?>
-  <div class="stat-card" style="cursor:pointer" onclick="setFilter('<?= $k ?>')">
-    <div class="stat-icon" style="background:<?= $v['c'] ?>"><span style="font-size:18px"><?= $v['icon'] ?></span></div>
-    <div class="stat-value"><?= $stats_all[$k] ?></div>
-    <div class="stat-label"><?= $v['label'] ?></div>
+<div class="gr-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
+  <?php foreach(['programado'=>['icon'=>'📅','label'=>'Programados','col'=>'#3b82f6'],'en_proceso'=>['icon'=>'✂️','label'=>'En proceso','col'=>'#f59e0b'],'completado'=>['icon'=>'✅','label'=>'Completados','col'=>'#10b981'],'cancelado'=>['icon'=>'✕','label'=>'Cancelados','col'=>'#ef4444']] as $k=>$v): ?>
+  <div style="background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 10px;text-align:center;cursor:pointer;transition:all .15s" onclick="setFilter('<?= $k ?>')" onmouseover="this.style.borderColor='<?= $v['col'] ?>'" onmouseout="this.style.borderColor='var(--border)'">
+    <div style="font-size:22px;font-weight:800;color:<?= $v['col'] ?>"><?= $stats_all[$k] ?></div>
+    <div style="font-size:11px;color:var(--text3);margin-top:2px"><?= $v['icon'] ?> <?= $v['label'] ?></div>
   </div>
   <?php endforeach; ?>
 </div>
@@ -406,34 +413,30 @@ if (!$groom_sel && !empty($all_groomings)) {
       ];
       $ecd = $estado_cfg_det[$groom_sel['estado']] ?? ['bg'=>'#f1f5f9','color'=>'#475569','icon'=>'•'];
     ?>
-    <!-- Cabecera del detalle -->
-    <div class="gr-det-head">
-      <div style="display:flex;align-items:center;gap:16px">
+    <?php
+      $banner_col = ['programado'=>'#3b82f6','en_proceso'=>'#f59e0b','completado'=>'#10b981','cancelado'=>'#ef4444'][$groom_sel['estado']] ?? '#3b82f6';
+    ?>
+    <!-- BANNER del servicio -->
+    <div class="gr-det-head" style="background:<?= $banner_col ?>12;border-bottom:3px solid <?= $banner_col ?>">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
         <!-- Foto -->
         <?php if ($foto_det): ?>
-        <img src="<?= $foto_det ?>" style="width:72px;height:72px;border-radius:14px;object-fit:cover;border:2px solid var(--border);flex-shrink:0">
+        <img src="<?= $foto_det ?>" style="width:60px;height:60px;border-radius:14px;object-fit:cover;flex-shrink:0">
         <?php else: ?>
-        <div style="width:72px;height:72px;border-radius:14px;background:var(--primary-l);display:flex;align-items:center;justify-content:center;font-size:36px;flex-shrink:0">
+        <div style="width:60px;height:60px;border-radius:14px;background:<?= $banner_col ?>25;display:flex;align-items:center;justify-content:center;font-size:30px;flex-shrink:0">
           <?= $ei[$groom_sel['especie']]??'🐾' ?>
         </div>
         <?php endif; ?>
-        <div class="flex-1">
+        <div class="flex-1" style="min-width:150px">
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-            <div style="font-size:20px;font-weight:800;color:var(--text)"><?= clean($groom_sel['mascota']) ?></div>
+            <div style="font-size:19px;font-weight:800;color:var(--text)"><?= clean($groom_sel['mascota']) ?></div>
             <span class="gr-estado-badge" style="background:<?= $ecd['bg'] ?>;color:<?= $ecd['color'] ?>">
               <?= $ecd['icon'] ?> <?= ucfirst(str_replace('_',' ',$groom_sel['estado'])) ?>
             </span>
           </div>
-          <div style="font-size:13px;color:var(--text3);margin-top:3px">
-            👤 <?= clean($groom_sel['dueno']) ?> ·
-            📅 <?= date('d/m/Y',strtotime($groom_sel['fecha'])) ?> a las <?= date('H:i',strtotime($groom_sel['fecha'])) ?> hs ·
-            ⏱ <?= $groom_sel['duracion_minutos'] ?> min
-          </div>
-          <div style="font-size:13px;color:var(--text2);margin-top:2px">
-            <?= $servicio_icons[$groom_sel['tipo_servicio']] ?>
-            <strong><?= $servicio_labels[$groom_sel['tipo_servicio']] ?></strong>
-            <?= $groom_sel['tipo_corte'] ? ' — '.clean($groom_sel['tipo_corte']) : '' ?>
-            · 👤 <?= clean($groom_sel['groomer']) ?>
+          <div style="font-size:12px;color:var(--text2);margin-top:3px">
+            <?= $servicio_icons[$groom_sel['tipo_servicio']] ?> <strong><?= $servicio_labels[$groom_sel['tipo_servicio']] ?></strong><?= $groom_sel['tipo_corte'] ? ' — '.clean($groom_sel['tipo_corte']) : '' ?>
+            · 📅 <?= date('d/m/Y',strtotime($groom_sel['fecha'])) ?> <?= date('H:i',strtotime($groom_sel['fecha'])) ?> · ⏱ <?= $groom_sel['duracion_minutos'] ?> min
           </div>
         </div>
         <!-- Precio -->
@@ -463,10 +466,10 @@ if (!$groom_sel && !empty($all_groomings)) {
     <div class="gr-det-body">
 
       <!-- Grid info -->
-      <div class="gr-det-grid">
+      <div class="gr-det-grid" style="--gr-accent:<?= $banner_col ?>">
         <!-- Info del servicio -->
         <div class="gr-det-box">
-          <div class="gr-det-box-title">✂️ Datos del servicio</div>
+          <div class="gr-det-box-title">Datos del servicio</div>
           <div class="gr-det-row"><span class="gr-det-lbl">Tipo de servicio</span><span class="gr-det-val"><?= $servicio_icons[$groom_sel['tipo_servicio']] ?> <?= $servicio_labels[$groom_sel['tipo_servicio']] ?></span></div>
           <?php if ($groom_sel['tipo_corte']): ?>
           <div class="gr-det-row"><span class="gr-det-lbl">Tipo de corte</span><span class="gr-det-val"><?= clean($groom_sel['tipo_corte']) ?></span></div>
@@ -480,47 +483,52 @@ if (!$groom_sel && !empty($all_groomings)) {
         </div>
         <!-- Info del cliente/mascota -->
         <div class="gr-det-box">
-          <div class="gr-det-box-title">👤 Cliente / Mascota</div>
+          <div class="gr-det-box-title">Cliente / Mascota</div>
           <div class="gr-det-row"><span class="gr-det-lbl">Dueño</span><span class="gr-det-val"><?= clean($groom_sel['dueno']) ?></span></div>
           <div class="gr-det-row"><span class="gr-det-lbl">Teléfono</span>
             <span class="gr-det-val"><a href="https://wa.me/<?= $tel_det ?>" target="_blank" style="color:var(--wa);text-decoration:none">💬 <?= clean($groom_sel['telefono']) ?></a></span>
           </div>
           <div class="gr-det-row"><span class="gr-det-lbl">Mascota</span><span class="gr-det-val"><?= $ei[$groom_sel['especie']]??'🐾' ?> <?= clean($groom_sel['mascota']) ?></span></div>
-          <div class="gr-det-row"><span class="gr-det-lbl">Especie</span><span class="gr-det-val"><?= ucfirst($groom_sel['especie']) ?></span></div>
-          <?php if ($groom_sel['raza']??''): ?>
-          <div class="gr-det-row"><span class="gr-det-lbl">Raza</span><span class="gr-det-val"><?= clean($groom_sel['raza']) ?></span></div>
-          <?php endif; ?>
-          <?php if ($groom_sel['alergias_mascota']??''): ?>
-          <div class="gr-det-row"><span class="gr-det-lbl">⚠️ Alergias</span><span class="gr-det-val" style="color:var(--danger)"><?= clean($groom_sel['alergias_mascota']) ?></span></div>
-          <?php endif; ?>
+          <div class="gr-det-row"><span class="gr-det-lbl">Especie</span><span class="gr-det-val"><?= ucfirst($groom_sel['especie']) ?><?= ($groom_sel['raza']??'')?' · '.clean($groom_sel['raza']):'' ?></span></div>
+          <?php
+            // Coherencia de alergias: usar la reportada en el servicio, o la de la ficha, o "Ninguna"
+            $alergia_txt = trim($groom_sel['alergias_reportadas'] ?? '') ?: trim($groom_sel['alergias_mascota'] ?? '');
+          ?>
+          <div class="gr-det-row"><span class="gr-det-lbl">⚠️ Alergias</span>
+            <?php if ($alergia_txt): ?>
+              <span class="gr-det-val" style="color:var(--danger)"><?= clean($alergia_txt) ?></span>
+            <?php else: ?>
+              <span class="gr-det-val" style="color:var(--text3)">Ninguna</span>
+            <?php endif; ?>
+          </div>
         </div>
       </div>
 
       <!-- Secciones condicionales -->
       <?php if ($groom_sel['alergias_reportadas']??''): ?>
-      <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:12px 14px;margin-bottom:12px">
-        <div style="font-size:11px;font-weight:700;color:#78350f;margin-bottom:6px;display:flex;align-items:center;gap:5px">⚠️ ALERGIAS REPORTADAS</div>
+      <div style="background:#fffbeb;border-left:3px solid #f59e0b;border-radius:0 10px 10px 0;padding:11px 14px;margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:3px">⚠️ ALERGIAS REPORTADAS</div>
         <div style="font-size:13px;color:#78350f"><?= nl2br(clean($groom_sel['alergias_reportadas'])) ?></div>
       </div>
       <?php endif; ?>
 
       <?php if ($groom_sel['productos_usados']??''): ?>
-      <div class="gr-det-box" style="margin-bottom:12px">
-        <div class="gr-det-box-title">🧴 Productos utilizados</div>
+      <div style="background:#f0fdf4;border-left:3px solid #10b981;border-radius:0 10px 10px 0;padding:11px 14px;margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:#065f46;margin-bottom:3px">🧴 PRODUCTOS UTILIZADOS</div>
         <div style="font-size:13px;color:var(--text2);line-height:1.7"><?= nl2br(clean($groom_sel['productos_usados'])) ?></div>
       </div>
       <?php endif; ?>
 
       <?php if ($groom_sel['observaciones']??''): ?>
-      <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 14px;margin-bottom:12px">
-        <div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:6px">📝 Observaciones del servicio</div>
-        <div style="font-size:13px;color:#78350f;line-height:1.7"><?= nl2br(clean($groom_sel['observaciones'])) ?></div>
+      <div style="background:var(--bg3);border-left:3px solid #6366f1;border-radius:0 10px 10px 0;padding:11px 14px;margin-bottom:10px">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:3px">📝 OBSERVACIONES DEL SERVICIO</div>
+        <div style="font-size:13px;color:var(--text2);line-height:1.7"><?= nl2br(clean($groom_sel['observaciones'])) ?></div>
       </div>
       <?php endif; ?>
 
       <?php if ($groom_sel['notas_internas']??''): ?>
-      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
-        <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:6px">🔒 Notas internas</div>
+      <div style="background:var(--bg3);border-left:3px solid var(--border);border-radius:0 10px 10px 0;padding:11px 14px">
+        <div style="font-size:11px;font-weight:700;color:var(--text3);margin-bottom:3px">🔒 NOTAS INTERNAS</div>
         <div style="font-size:13px;color:var(--text2)"><?= nl2br(clean($groom_sel['notas_internas'])) ?></div>
       </div>
       <?php endif; ?>
