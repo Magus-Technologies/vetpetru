@@ -124,6 +124,96 @@ class SunatService
         ];
     }
 
+    // ─── NOTAS DE CRÉDITO/DÉBITO ─────────────────────────────────────
+
+    public function generarXmlNota(int $notaId): array
+    {
+        $nota = $this->fetchNota($notaId);
+        if (!$nota) return ['ok' => false, 'mensaje' => "Nota #$notaId no encontrada."];
+
+        $ventaOrig = $this->fetchVenta((int) $nota['venta_id']);
+        $cliente   = $this->fetchCliente((int) $ventaOrig['cliente_id']);
+        $items     = $this->fetchItems((int) $nota['venta_id']);
+
+        try {
+            $payload = SunatBuilder::buildNota($nota, $ventaOrig, $cliente, $items);
+        } catch (Throwable $e) {
+            $this->marcarNotaEstado($notaId, 'rechazado', $e->getMessage());
+            return ['ok' => false, 'mensaje' => $e->getMessage()];
+        }
+
+        $gen = $this->client->generarNota($payload);
+        if (empty($gen['estado'])) {
+            $msg = $gen['mensaje'] ?? 'Error al generar XML de nota.';
+            $this->marcarNotaEstado($notaId, 'rechazado', $msg);
+            return ['ok' => false, 'mensaje' => $msg, 'detalle' => $gen];
+        }
+
+        $hash   = $gen['data']['hash']          ?? '';
+        $qrInfo = $gen['data']['qr_info']       ?? '';
+        $xml    = $gen['data']['contenido_xml'] ?? '';
+
+        $st = $this->db->prepare("
+            UPDATE notas_credito SET
+                sunat_estado='pendiente', sunat_hash=?, sunat_qr=?, sunat_xml=?,
+                sunat_cdr=NULL, sunat_mensaje='XML generado, pendiente de envío.', sunat_fecha=NOW()
+            WHERE id=?
+        ");
+        $st->execute([$hash, $qrInfo, $xml, $notaId]);
+
+        return ['ok' => true, 'mensaje' => 'XML de nota generado. Listo para enviar.', 'hash' => $hash, 'qr' => $qrInfo];
+    }
+
+    public function enviarSunatNota(int $notaId): array
+    {
+        $nota = $this->fetchNota($notaId);
+        if (!$nota) return ['ok' => false, 'mensaje' => "Nota #$notaId no encontrada."];
+        if (empty($nota['sunat_xml'])) return ['ok' => false, 'mensaje' => 'Esta nota no tiene XML generado.'];
+        if ($nota['sunat_estado'] === 'aceptado') return ['ok' => false, 'mensaje' => 'Esta nota ya fue aceptada por SUNAT.'];
+
+        $tipoNota      = $nota['tipo_nota'] === 'credito' ? '07' : '08';
+        $num           = str_pad((string)$nota['numero'], 8, '0', STR_PAD_LEFT);
+        $nombreArchivo = SUNAT_RUC . '-' . $tipoNota . '-' . $nota['serie'] . '-' . $num;
+
+        $env = $this->client->enviarDocumento([
+            'ruc'                 => SUNAT_RUC,
+            'usuario'             => SUNAT_USUARIO_SOL,
+            'clave'               => SUNAT_CLAVE_SOL,
+            'endpoint'            => SUNAT_ENDPOINT,
+            'nombre_documento'    => $nombreArchivo,
+            'contenido_documento' => $nota['sunat_xml'],
+        ]);
+
+        if (empty($env['estado'])) {
+            $msg = $env['mensaje'] ?? 'Error al enviar nota a SUNAT.';
+            $this->marcarNotaEstado($notaId, 'rechazado', $msg, $nota['sunat_xml'], $nota['sunat_hash'] ?? '', $nota['sunat_qr'] ?? '');
+            return ['ok' => false, 'mensaje' => $msg, 'detalle' => $env];
+        }
+
+        $st = $this->db->prepare("
+            UPDATE notas_credito SET
+                sunat_estado='aceptado', sunat_hash=?, sunat_qr=?, sunat_xml=?,
+                sunat_cdr=?, sunat_mensaje=?, sunat_fecha=NOW()
+            WHERE id=?
+        ");
+        $st->execute([$nota['sunat_hash'] ?? '', $nota['sunat_qr'] ?? '', $nota['sunat_xml'],
+                      $env['cdr'] ?? '', $env['mensaje'] ?? 'ACEPTADO', $notaId]);
+
+        if ($nota['tipo_nota'] === 'credito') {
+            $this->db->prepare("UPDATE ventas SET estado='anulado' WHERE id=?")
+                     ->execute([$nota['venta_id']]);
+        }
+
+        return ['ok' => true, 'mensaje' => 'Nota aceptada por SUNAT.', 'cdr' => $env['cdr'] ?? ''];
+    }
+
+    public static function siguienteNumeroNota(PDO $db, string $serie): int
+    {
+        $st = $db->prepare("SELECT COALESCE(MAX(numero),0)+1 FROM notas_credito WHERE serie=?");
+        $st->execute([$serie]);
+        return (int) $st->fetchColumn();
+    }
+
     // ─── Helpers ─────────────────────────────────────────────────────
 
     private function nombreArchivo(array $venta): string
@@ -204,5 +294,21 @@ class SunatService
         $st = $this->db->prepare("SELECT * FROM venta_items WHERE venta_id=? ORDER BY id");
         $st->execute([$ventaId]);
         return $st->fetchAll();
+    }
+
+    private function fetchNota(int $id): ?array
+    {
+        $st = $this->db->prepare("SELECT * FROM notas_credito WHERE id=?");
+        $st->execute([$id]);
+        return $st->fetch() ?: null;
+    }
+
+    private function marcarNotaEstado(int $id, string $estado, string $mensaje = '', string $xml = '', string $hash = '', string $qr = ''): void
+    {
+        $st = $this->db->prepare("
+            UPDATE notas_credito SET sunat_estado=?, sunat_mensaje=?, sunat_xml=?, sunat_hash=?, sunat_qr=?, sunat_fecha=NOW()
+            WHERE id=?
+        ");
+        $st->execute([$estado, mb_substr($mensaje, 0, 1000), $xml, $hash, $qr, $id]);
     }
 }

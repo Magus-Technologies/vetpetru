@@ -33,6 +33,36 @@ class SunatBuilder
         ];
     }
 
+    /**
+     * @param array $nota       Row from `notas_credito`
+     * @param array $ventaOrig  Row from `ventas` (the affected document)
+     * @param array $cliente    Row from `clientes`
+     * @param array $items      Rows from `venta_items` of the original venta
+     */
+    public static function buildNota(array $nota, array $ventaOrig, array $cliente, array $items): array
+    {
+        $tipoDocAfectado  = $ventaOrig['tipo_comprobante'] === 'factura' ? '01' : '03';
+        $serieNumAfectado = $ventaOrig['serie'] . '-' . str_pad((string)$ventaOrig['numero'], 8, '0', STR_PAD_LEFT);
+        $aplica_igv       = !isset($ventaOrig['aplica_igv']) || (int)$ventaOrig['aplica_igv'] === 1;
+
+        return [
+            'endpoint'              => SUNAT_ENDPOINT,
+            'documento'             => $nota['tipo_nota'],
+            'empresa'               => self::empresa(),
+            'cliente'               => self::cliente($cliente, $ventaOrig['tipo_comprobante']),
+            'serie'                 => $nota['serie'],
+            'numero'                => (string) $nota['numero'],
+            'fecha_emision'         => date('Y-m-d H:i:s'),
+            'moneda'                => 'PEN',
+            'serie_numero_afectado' => $serieNumAfectado,
+            'cod_motivo'            => $nota['cod_motivo'],
+            'des_motivo'            => $nota['des_motivo'],
+            'doc_afectado'          => $ventaOrig['tipo_comprobante'],
+            'tipo_doc_afectado'     => $tipoDocAfectado,
+            'detalles'              => self::detalles($items, $aplica_igv),
+        ];
+    }
+
     /** Datos de la empresa emisora desde config_sunat.php */
     private static function empresa(): array
     {

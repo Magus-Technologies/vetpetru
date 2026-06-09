@@ -82,6 +82,12 @@ define('SUNAT_DEPARTAMENTO',    $__cfg['departamento'] ?? 'LIMA');
 define('SUNAT_SERIE_FACTURA', $__cfg['serie_factura'] ?: 'F001');
 define('SUNAT_SERIE_BOLETA',  $__cfg['serie_boleta'] ?: 'B001');
 
+// ─── Series Notas de Crédito / Débito ─────────────────────────
+if (!defined('SUNAT_SERIE_NC_FACTURA')) define('SUNAT_SERIE_NC_FACTURA', 'FC01');
+if (!defined('SUNAT_SERIE_NC_BOLETA'))  define('SUNAT_SERIE_NC_BOLETA',  'BC01');
+if (!defined('SUNAT_SERIE_ND_FACTURA')) define('SUNAT_SERIE_ND_FACTURA', 'FD01');
+if (!defined('SUNAT_SERIE_ND_BOLETA'))  define('SUNAT_SERIE_ND_BOLETA',  'BD01');
+
 // ─── helpers de estado del certificado ──────────────────────────
 function sunatCertSubido(): bool {
     $c = loadSunatConfigFromDB();
