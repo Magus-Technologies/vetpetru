@@ -1,59 +1,103 @@
 <?php
+/* ============================================================
+   API de Autocompletado / Búsqueda global — VetPro
+   GET ?q=texto  → busca en mascotas, clientes, facturas, citas
+   Devuelve JSON: {mascotas:[], clientes:[], facturas:[], citas:[]}
+   ============================================================ */
 require_once __DIR__ . '/../includes/config.php';
-requireLogin();
 header('Content-Type: application/json; charset=utf-8');
-header('Cache-Control: no-cache');
 
-$q = trim($_GET['q'] ?? '');
-if (strlen($q) < 2) {
-    echo json_encode(['ok'=>true,'mascotas'=>[],'clientes'=>[],'consultas'=>[],'facturas'=>[],'citas'=>[]]);
-    exit;
-}
+try { if (function_exists('requireLogin')) requireLogin(); }
+catch (Exception $e) { echo json_encode(['error'=>'no auth']); exit; }
 
-$db   = getDB();
-$like = "%$q%";
+$db = getDB();
+$q  = trim($_GET['q'] ?? '');
+if (mb_strlen($q) < 2) { echo json_encode(['mascotas'=>[],'clientes'=>[],'facturas'=>[],'citas'=>[]]); exit; }
 
-// 1. Mascotas
-$st = $db->prepare("SELECT m.id, m.nombre, m.especie, m.raza, m.foto, c.nombre as dueno, c.telefono FROM mascotas m JOIN clientes c ON c.id=m.cliente_id WHERE m.estado='activo' AND (m.nombre LIKE ? OR m.raza LIKE ? OR c.nombre LIKE ?) ORDER BY m.nombre ASC LIMIT 6");
-$st->execute([$like,$like,$like]);
-$mascotas = $st->fetchAll(PDO::FETCH_ASSOC);
-foreach ($mascotas as &$m) {
-    $m['foto_url'] = ($m['foto'] && file_exists(UPLOADS_PATH.'/'.$m['foto'])) ? UPLOADS_URL.'/'.$m['foto'] : null;
-}
-unset($m);
+$like = '%'.$q.'%';
 
-// 2. Clientes
-$st = $db->prepare("SELECT id, nombre, telefono, dni FROM clientes WHERE activo=1 AND (nombre LIKE ? OR telefono LIKE ? OR dni LIKE ?) ORDER BY nombre ASC LIMIT 4");
-$st->execute([$like,$like,$like]);
-$clientes = $st->fetchAll(PDO::FETCH_ASSOC);
-
-// 3. Consultas / Historia clínica
-$st = $db->prepare("SELECT con.id, con.diagnostico, con.fecha, m.id as mascota_id, m.nombre as mascota, m.especie FROM consultas con JOIN mascotas m ON m.id=con.mascota_id WHERE con.diagnostico LIKE ? OR con.sintomas LIKE ? ORDER BY con.fecha DESC LIMIT 3");
-$st->execute([$like,$like]);
-$consultas = $st->fetchAll(PDO::FETCH_ASSOC);
-
-// 4. Facturas / Comprobantes
-$facturas = [];
+// Filtro de sede opcional
+$sedeM = $sedeV = $sedeC = '';
 try {
-    $st = $db->prepare("SELECT v.id, v.serie, v.numero, v.total, v.fecha, v.estado, v.tipo_comprobante, c.nombre as cliente FROM ventas v JOIN clientes c ON c.id=v.cliente_id WHERE c.nombre LIKE ? OR CONCAT(v.serie,'-',v.numero) LIKE ? ORDER BY v.fecha DESC LIMIT 3");
-    $st->execute([$like, $like]);
-    $facturas = $st->fetchAll(PDO::FETCH_ASSOC);
-} catch(Exception $e) {}
+    if (function_exists('verTodasSedes') && !verTodasSedes()) {
+        $sid = (int)getSede();
+        $sedeM = " AND m.sede_id=$sid";
+        $sedeV = " AND v.sede_id=$sid";
+        $sedeC = " AND ci.sede_id=$sid";
+    }
+} catch(Exception $e){}
 
-// 5. Citas
-$citas_r = [];
+$res = ['mascotas'=>[], 'clientes'=>[], 'facturas'=>[], 'citas'=>[]];
+
+// ── Mascotas ──
 try {
-    $st = $db->prepare("SELECT ci.id, ci.fecha, ci.hora, ci.estado, ci.tipo_servicio, m.nombre as mascota, m.especie, c.nombre as cliente FROM citas ci JOIN mascotas m ON m.id=ci.mascota_id JOIN clientes c ON c.id=m.cliente_id WHERE m.nombre LIKE ? OR c.nombre LIKE ? ORDER BY ci.fecha DESC LIMIT 3");
+    $st = $db->prepare(
+        "SELECT m.id, m.nombre, m.especie, m.raza, m.foto, c.nombre AS dueno
+         FROM mascotas m LEFT JOIN clientes c ON c.id=m.cliente_id
+         WHERE m.estado='activo' AND (m.nombre LIKE ? OR c.nombre LIKE ? OR m.especie LIKE ?)$sedeM
+         ORDER BY m.nombre ASC LIMIT 6"
+    );
+    $st->execute([$like,$like,$like]);
+    foreach ($st->fetchAll() as $m) {
+        $foto_url = (!empty($m['foto']) && file_exists(UPLOADS_PATH.'/'.$m['foto']))
+            ? BASE_URL.'/public/uploads/'.$m['foto'] : null;
+        $res['mascotas'][] = [
+            'id'=>(int)$m['id'], 'nombre'=>$m['nombre'], 'especie'=>$m['especie'],
+            'raza'=>$m['raza'], 'dueno'=>$m['dueno'] ?: '—', 'foto_url'=>$foto_url,
+        ];
+    }
+} catch(Exception $e){}
+
+// ── Clientes ──
+try {
+    $st = $db->prepare(
+        "SELECT id, nombre, telefono, dni FROM clientes
+         WHERE activo=1 AND (nombre LIKE ? OR telefono LIKE ? OR dni LIKE ?)
+         ORDER BY nombre ASC LIMIT 6"
+    );
+    $st->execute([$like,$like,$like]);
+    foreach ($st->fetchAll() as $c) {
+        $res['clientes'][] = [
+            'id'=>(int)$c['id'], 'nombre'=>$c['nombre'],
+            'telefono'=>$c['telefono'], 'dni'=>$c['dni'],
+        ];
+    }
+} catch(Exception $e){}
+
+// ── Facturas / ventas (por número o cliente) ──
+try {
+    $st = $db->prepare(
+        "SELECT v.id, v.serie, v.numero, v.total, COALESCE(c.nombre,'—') AS cliente
+         FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id
+         WHERE (CONCAT(v.serie,'-',v.numero) LIKE ? OR v.numero LIKE ? OR c.nombre LIKE ?)
+         ORDER BY v.fecha DESC LIMIT 5"
+    );
+    $st->execute([$like,$like,$like]);
+    foreach ($st->fetchAll() as $f) {
+        $res['facturas'][] = [
+            'id'=>(int)$f['id'], 'serie'=>$f['serie'], 'numero'=>(int)$f['numero'],
+            'cliente'=>$f['cliente'], 'total'=>$f['total'],
+        ];
+    }
+} catch(Exception $e){}
+
+// ── Citas (por mascota o cliente) ──
+try {
+    $st = $db->prepare(
+        "SELECT ci.id, ci.fecha, ci.hora, ci.estado, m.nombre AS mascota, COALESCE(c.nombre,'—') AS cliente
+         FROM citas ci
+         JOIN mascotas m ON m.id=ci.mascota_id
+         LEFT JOIN clientes c ON c.id=m.cliente_id
+         WHERE (m.nombre LIKE ? OR c.nombre LIKE ?)$sedeC
+         ORDER BY ci.fecha DESC LIMIT 5"
+    );
     $st->execute([$like,$like]);
-    $citas_r = $st->fetchAll(PDO::FETCH_ASSOC);
-} catch(Exception $e) {}
+    foreach ($st->fetchAll() as $c) {
+        $res['citas'][] = [
+            'id'=>(int)$c['id'], 'mascota'=>$c['mascota'], 'cliente'=>$c['cliente'],
+            'fecha'=>$c['fecha'], 'hora'=>$c['hora'], 'estado'=>$c['estado'],
+        ];
+    }
+} catch(Exception $e){}
 
-echo json_encode([
-    'ok'       => true,
-    'q'        => $q,
-    'mascotas' => $mascotas,
-    'clientes' => $clientes,
-    'consultas'=> $consultas,
-    'facturas' => $facturas,
-    'citas'    => $citas_r,
-], JSON_UNESCAPED_UNICODE);
+echo json_encode($res);

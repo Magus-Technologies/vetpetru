@@ -55,7 +55,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
             $cols=implode(',',$flds);$pls=implode(',',array_map(fn($f)=>":$f",$flds));
             $st=$db->prepare("INSERT INTO mascotas ($cols) VALUES ($pls)");
         }
-        $st->execute($data); $msg='success';
+        $st->execute($data);
+        // Si es mascota NUEVA, asignar el siguiente HC permanente (HC-0001, HC-0002...)
+        if (!$id) {
+            // CRÍTICO: capturar lastInsertId AHORA, antes de cualquier otra consulta
+            $nueva_id = (int)$db->lastInsertId();
+            try {
+                // Asegurar que la columna exista
+                $col_hc = $db->query("SHOW COLUMNS FROM mascotas LIKE 'hc_numero'")->fetchAll();
+                if (empty($col_hc)) {
+                    $db->exec("ALTER TABLE mascotas ADD COLUMN hc_numero VARCHAR(15) NULL");
+                    $db->exec("CREATE INDEX idx_hc_numero ON mascotas (hc_numero)");
+                }
+                // Siguiente HC = MAX + 1 (sigue el correlativo)
+                $r = $db->query("SELECT MAX(CAST(SUBSTRING(hc_numero,4) AS UNSIGNED)) AS m FROM mascotas WHERE hc_numero LIKE 'HC-%'")->fetch();
+                $next = ((int)($r['m'] ?? 0)) + 1;
+                if ($nueva_id > 0) {
+                    $db->prepare("UPDATE mascotas SET hc_numero=? WHERE id=?")
+                       ->execute([sprintf('HC-%04d', $next), $nueva_id]);
+                }
+            } catch(Exception $e) { /* no bloquea el guardado */ }
+        }
+        $msg='success';
         if ($id) { $action='ver'; $_GET['id']=$id; } else { $action='list'; }
     }
     if ($pa==='delete_foto') {
@@ -104,7 +125,7 @@ if ($action==='ver' && isset($_GET['id'])) {
     ?>
 
 <style>
-.mas-profile { display:grid; grid-template-columns:300px 1fr 260px; gap:16px; }
+.mas-profile { display:grid; grid-template-columns:300px minmax(0,1fr) 260px; grid-template-areas:"left center right"; gap:16px; max-width:100%; }
 /* Dropdown menu items */
 .mas-dmenu-item {
   display:flex;align-items:center;gap:9px;padding:9px 13px;
@@ -112,9 +133,9 @@ if ($action==='ver' && isset($_GET['id'])) {
   transition:background .12s;font-weight:500;
 }
 .mas-dmenu-item:hover { background:var(--bg3); color:var(--primary); }
-.mas-left { display:flex; flex-direction:column; gap:14px; }
-.mas-center { display:flex; flex-direction:column; gap:14px; }
-.mas-right { display:flex; flex-direction:column; gap:14px; }
+.mas-left { grid-area:left; display:flex; flex-direction:column; gap:14px; min-width:0; }
+.mas-center { grid-area:center; display:flex; flex-direction:column; gap:14px; min-width:0; }
+.mas-right { grid-area:right; display:flex; flex-direction:column; gap:14px; min-width:0; }
 .mas-photo-card { background:var(--bg2); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
 .mas-photo-wrap { width:100%; aspect-ratio:1; background:var(--bg3); display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; }
 .mas-photo-wrap img { width:100%; height:100%; object-fit:cover; }
@@ -144,10 +165,29 @@ if ($action==='ver' && isset($_GET['id'])) {
 .resumen-med-stat { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; }
 .resumen-med-stat:last-child { border-bottom:none; }
 .nota-card { background:#fefce8; border:1px solid #fde68a; border-radius:10px; padding:12px 14px; font-size:12px; color:#78350f; line-height:1.6; }
-@media(max-width:1100px) { .mas-profile { grid-template-columns:240px 1fr; } .mas-right { display:none; } }
+/* ── Responsive de la ficha de mascota ──
+   Antes: entre 768-1100px se ESCONDÍA la columna derecha (Acciones rápidas,
+   Resumen médico, Próximas acciones). Ahora se APILA debajo para no perder nada. */
+
+/* Pantallas medianas/tablets: pasar de 3 columnas a 2 (izq + centro),
+   y la columna derecha baja a ancho completo debajo (NO se esconde). */
+@media(max-width:1100px) {
+  .mas-profile {
+    grid-template-columns:260px minmax(0,1fr);
+    grid-template-areas:"left center" "right right";
+  }
+  .mas-left   { grid-area:left; }
+  .mas-center { grid-area:center; }
+  .mas-right  {
+    grid-area:right;
+    display:grid !important;
+    grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
+    gap:14px;
+  }
+}
 @media(max-width:768px) {
-  .mas-profile { grid-template-columns:1fr !important; gap:10px !important; }
-  .mas-right { display:block !important; overflow:visible !important; min-width:0 !important; }
+  .mas-profile { grid-template-columns:1fr !important; grid-template-areas:"left" "center" "right" !important; gap:10px !important; }
+  .mas-right { display:flex !important; flex-direction:column !important; overflow:visible !important; min-width:0 !important; }
   .mas-left { gap:10px !important; }
   .mas-quick-header { flex-wrap:wrap !important; gap:10px !important; padding:14px !important; }
   .mas-banner-stats { gap:6px !important; }

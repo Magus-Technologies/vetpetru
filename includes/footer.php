@@ -103,9 +103,9 @@ function toggleNotifPanel() {
 
 function cargarNotificaciones() {
   fetch(_notifApi + '?action=list&limit=20')
-    .then(function(r){ return r.json(); })
+    .then(function(r){ return r.ok ? r.json() : null; })
     .then(function(d){
-      if (!d.ok) return;
+      if (!d || !d.ok) return;
       actualizarBadge(d.sin_leer);
       renderNotifList(d.notifs);
     }).catch(function(){});
@@ -188,8 +188,8 @@ document.addEventListener('click', function(e) {
 // Polling cada 60 segundos para actualizar badge
 function pollNotificaciones() {
   fetch(_notifApi + '?action=count')
-    .then(function(r){ return r.json(); })
-    .then(function(d){ if(d.ok) actualizarBadge(d.count); })
+    .then(function(r){ return r.ok ? r.json() : null; })
+    .then(function(d){ if(d && d.ok) actualizarBadge(d.count); })
     .catch(function(){});
 }
 pollNotificaciones();

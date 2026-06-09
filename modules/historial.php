@@ -1,6 +1,46 @@
 <?php
 $page = 'historial'; $pageTitle = 'Historia Clínica';
 
+// ════════════════════════════════════════════════════════════════
+// Número de Historia Clínica PERMANENTE
+// Antes se calculaba según el orden del listado (cambiaba al agregar
+// mascotas). Ahora se guarda en la columna `mascotas.hc_numero` y
+// nunca cambia. La primera vez que entras, asigna el número a las
+// mascotas que no lo tienen (respeta el orden por id).
+// ════════════════════════════════════════════════════════════════
+require_once __DIR__ . '/../includes/config.php';
+$_hc_db = getDB();
+try {
+    $col = $_hc_db->query("SHOW COLUMNS FROM mascotas LIKE 'hc_numero'")->fetchAll();
+    if (empty($col)) {
+        $_hc_db->exec("ALTER TABLE mascotas ADD COLUMN hc_numero VARCHAR(15) NULL");
+        $_hc_db->exec("CREATE INDEX idx_hc_numero ON mascotas (hc_numero)");
+    }
+    // Asignar HC a mascotas que aún no lo tienen (respeta orden por id = orden de creación)
+    $sinHC = $_hc_db->query("SELECT id FROM mascotas WHERE hc_numero IS NULL OR hc_numero='' ORDER BY id ASC")->fetchAll();
+    if ($sinHC) {
+        // Determinar el próximo número a partir del MAX existente
+        $maxRow = $_hc_db->query("SELECT MAX(CAST(SUBSTRING(hc_numero,4) AS UNSIGNED)) AS m FROM mascotas WHERE hc_numero LIKE 'HC-%'")->fetch();
+        $next = ((int)($maxRow['m'] ?? 0)) + 1;
+        $upd = $_hc_db->prepare("UPDATE mascotas SET hc_numero=? WHERE id=?");
+        foreach ($sinHC as $m) {
+            $upd->execute([sprintf('HC-%04d', $next), $m['id']]);
+            $next++;
+        }
+    }
+} catch(Exception $e) { /* no bloquear si falla */ }
+
+// Helper para reservar el siguiente HC al crear una mascota (lo usa también mascotas.php)
+if (!function_exists('hc_siguiente_numero')) {
+    function hc_siguiente_numero($db) {
+        try {
+            $r = $db->query("SELECT MAX(CAST(SUBSTRING(hc_numero,4) AS UNSIGNED)) AS m FROM mascotas WHERE hc_numero LIKE 'HC-%'")->fetch();
+            $n = ((int)($r['m'] ?? 0)) + 1;
+            return sprintf('HC-%04d', $n);
+        } catch(Exception $e) { return null; }
+    }
+}
+
 // ── GUARDAR CONSULTA (ANTES del header para que el redirect funcione) ──
 // Si va después del header, header('Location') falla con "headers already sent"
 // → guarda pero deja la pantalla en blanco.
@@ -515,8 +555,8 @@ if (!$mascota_id) {
         $_rs = $db->query("SHOW COLUMNS FROM `mascotas` LIKE 'sede_id'")->fetchAll();
         if (!empty($_rs) && !verTodasSedes()) { $wp .= " AND m.sede_id=".getSede(); }
     } catch (Exception $e) {}
-    // Orden por antigüedad de la PRIMERA consulta -> número correlativo estable
-    $sqlp = "SELECT m.id, m.nombre, m.especie, m.foto,
+    // Orden por antigüedad de la PRIMERA consulta (criterio para presentar)
+    $sqlp = "SELECT m.id, m.nombre, m.especie, m.foto, m.hc_numero,
                     cl.nombre AS dueno,
                     (SELECT COUNT(*) FROM consultas c2 WHERE c2.mascota_id=m.id) AS n_consultas,
                     (SELECT MAX(c3.fecha) FROM consultas c3 WHERE c3.mascota_id=m.id) AS ultima_visita,
@@ -524,26 +564,23 @@ if (!$mascota_id) {
              FROM mascotas m
              JOIN clientes cl ON cl.id=m.cliente_id
              WHERE $wp
-             ORDER BY (primera_visita IS NULL), primera_visita ASC, m.id ASC";
+             ORDER BY m.hc_numero ASC, m.id ASC";
     $stp = $db->prepare($sqlp); $stp->execute($pp);
     $lista_pacientes = $stp->fetchAll();
-    // Asignar número correlativo HC-0001, HC-0002, ... según el orden
-    foreach ($lista_pacientes as $idx => &$_p) { $_p['hc_num'] = sprintf('HC-%04d', $idx + 1); }
+    // El HC viene PERMANENTE desde la columna mascotas.hc_numero (no se recalcula nunca)
+    foreach ($lista_pacientes as &$_p) {
+        $_p['hc_num'] = !empty($_p['hc_numero']) ? $_p['hc_numero'] : sprintf('HC-%04d', $_p['id']);
+    }
     unset($_p);
 }
 
-// Número HC del paciente abierto (mismo criterio: posición por antigüedad de 1ª consulta)
+// Número HC del paciente abierto: leer la columna (permanente)
 $hc_num_actual = '';
 if ($mascota_id) {
     try {
-        $sede_cond = '';
-        $_rs2 = $db->query("SHOW COLUMNS FROM `mascotas` LIKE 'sede_id'")->fetchAll();
-        if (!empty($_rs2) && !verTodasSedes()) { $sede_cond = " AND m.sede_id=".getSede(); }
-        $orden = $db->query("SELECT m.id,
-                    (SELECT MIN(c4.fecha) FROM consultas c4 WHERE c4.mascota_id=m.id) AS primera_visita
-                 FROM mascotas m WHERE m.estado='activo'$sede_cond
-                 ORDER BY (primera_visita IS NULL), primera_visita ASC, m.id ASC")->fetchAll();
-        foreach ($orden as $i => $o) { if ((int)$o['id'] === $mascota_id) { $hc_num_actual = sprintf('HC-%04d', $i + 1); break; } }
+        $st_hc = $db->prepare("SELECT hc_numero FROM mascotas WHERE id=?");
+        $st_hc->execute([$mascota_id]);
+        $hc_num_actual = (string)$st_hc->fetchColumn();
     } catch (Exception $e) {}
 }
 ?>

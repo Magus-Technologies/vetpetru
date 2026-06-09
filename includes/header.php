@@ -71,6 +71,8 @@ $nav = [
   ['icon'=>'🧾', 'label'=>'Facturación',      'page'=>'facturacion', 'section'=>'GESTIÓN'],
   ['icon'=>'💰', 'label'=>'Caja',             'page'=>'caja',        'section'=>''],
   ['icon'=>'💳', 'label'=>'Reporte de Pagos', 'page'=>'reporte_pagos','section'=>''],
+  ['icon'=>'📋', 'label'=>'Cuentas por cobrar', 'page'=>'cuentas','section'=>''],
+  ['icon'=>'📦', 'label'=>'Movimientos',         'page'=>'movimientos','section'=>''],
   ['icon'=>'📊', 'label'=>'Reportes',         'page'=>'reportes',    'section'=>''],
   ['icon'=>'👤', 'label'=>'Personal',         'page'=>'personal',    'section'=>''],
   ['icon'=>'💬', 'label'=>'WhatsApp',         'page'=>'whatsapp',    'section'=>'COMUNICACIÓN'],
@@ -153,8 +155,8 @@ $nav = [
   .mob-overlay.active { display:block !important; }
   /* Hamburger */
   .mob-menu-btn { display:flex !important; align-items:center !important; justify-content:center !important; width:38px !important; height:38px !important; border-radius:10px !important; background:var(--bg3) !important; border:1.5px solid var(--border) !important; font-size:20px !important; cursor:pointer !important; flex-shrink:0 !important; }
-  /* Content */
-  .content { flex:1 !important; overflow-y:auto !important; padding:12px !important; -webkit-overflow-scrolling:touch !important; }
+  /* Content — padding-bottom amplio para que el último contenido no quede tapado por la barra inferior fija (60px) ni la zona de gestos del navegador */
+  .content { flex:1 !important; overflow-y:auto !important; padding:12px 12px 90px !important; -webkit-overflow-scrolling:touch !important; }
   /* Bottom nav */
   .mob-bottom-nav { display:flex !important; position:fixed !important; bottom:0 !important; left:0 !important; right:0 !important; height:60px !important; background:var(--bg2) !important; border-top:1px solid var(--border) !important; z-index:1000 !important; align-items:stretch !important; }
   .mob-nav-item { flex:1 !important; display:flex !important; flex-direction:column !important; align-items:center !important; justify-content:center !important; gap:2px !important; text-decoration:none !important; color:var(--text3) !important; font-size:9px !important; font-weight:600 !important; border:none !important; background:none !important; cursor:pointer !important; position:relative !important; -webkit-tap-highlight-color:transparent !important; }
@@ -165,6 +167,15 @@ $nav = [
   .g2,.g3,.g4,.g5,.g6 { grid-template-columns:1fr !important; }
   .form-row,.form-row-3 { grid-template-columns:1fr !important; }
   input, select, textarea { font-size:16px !important; }
+}
+
+/* Tablet y escritorio (≥769px): garantizar suficiente espacio inferior en el
+   área de contenido para que el final de los formularios largos (botones
+   Guardar/Cancelar) y de las fichas largas (ej. ficha de la mascota) sea
+   siempre alcanzable al hacer scroll. Antes la tablet tenía solo 40px y se
+   cortaba el último bloque. */
+@media (min-width:769px) {
+  .content { padding-bottom:110px !important; }
 }
 </style>
 </head>

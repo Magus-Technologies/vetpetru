@@ -32,51 +32,57 @@ $_recoger_datos = function($db) use ($_metodos) {
     $tiene_pagos = false;
     try { $tiene_pagos = !empty($db->query("SHOW TABLES LIKE 'venta_pagos'")->fetchAll()); } catch(Exception $e){}
 
-    if ($tiene_pagos) {
-        // Cada FILA es un pago individual (un recibo mixto sale en varias filas,
-        // cada monto en su método real). Así los totales por método cuadran exactos.
-        $sql = "SELECT v.id, v.tipo_comprobante, v.serie, v.numero, v.fecha,
-                       vp.monto AS total, vp.metodo_pago,
-                       COALESCE(c.nombre,'—') AS cliente
-                FROM venta_pagos vp
-                JOIN ventas v ON v.id = vp.venta_id
-                LEFT JOIN clientes c ON c.id = v.cliente_id
-                WHERE $where";
-        if ($metodo !== 'todos' && isset($_metodos[$metodo])) {
-            $sql .= " AND vp.metodo_pago = ?";
-            $params[] = $metodo;
-        }
-        $sql .= " ORDER BY v.fecha ASC, v.id ASC, vp.id ASC";
-    } else {
-        // Compatibilidad: si aún no existe venta_pagos, usar el método único de la venta
-        $sql = "SELECT v.id, v.tipo_comprobante, v.serie, v.numero, v.fecha, v.total, v.metodo_pago,
-                       COALESCE(c.nombre,'—') AS cliente
-                FROM ventas v
-                LEFT JOIN clientes c ON c.id=v.cliente_id
-                WHERE $where";
-        if ($metodo !== 'todos' && isset($_metodos[$metodo])) {
-            $sql .= " AND v.metodo_pago = ?";
-            $params[] = $metodo;
-        }
-        $sql .= " ORDER BY v.fecha ASC, v.id ASC";
+    // 1) Traer TODAS las ventas pagadas del rango (no se pierde ninguna).
+    $sqlV = "SELECT v.id, v.tipo_comprobante, v.serie, v.numero, v.fecha, v.total, v.metodo_pago,
+                    COALESCE(c.nombre,'—') AS cliente
+             FROM ventas v
+             LEFT JOIN clientes c ON c.id=v.cliente_id
+             WHERE $where
+             ORDER BY v.fecha ASC, v.id ASC";
+    $stV = $db->prepare($sqlV); $stV->execute($params);
+    $ventas = $stV->fetchAll();
+
+    // 2) Para cada venta: si tiene detalle en venta_pagos, lo uso (separa métodos);
+    //    si NO (venta antigua), uso el método y total de la propia venta (fallback).
+    $rows = [];
+    $pagos_por_venta = [];
+    if ($tiene_pagos && $ventas) {
+        $ids = array_map(fn($v)=>(int)$v['id'], $ventas);
+        $in = implode(',', array_fill(0, count($ids), '?'));
+        $stP = $db->prepare("SELECT venta_id, metodo_pago, monto FROM venta_pagos WHERE venta_id IN ($in) ORDER BY id ASC");
+        $stP->execute($ids);
+        foreach ($stP->fetchAll() as $p) { $pagos_por_venta[(int)$p['venta_id']][] = $p; }
     }
 
-    $st = $db->prepare($sql); $st->execute($params);
-    $rows = $st->fetchAll();
-
-    // Marcar qué recibos son de pago mixto (más de un pago), para señalarlo en la tabla
-    if (!empty($rows) && ($tiene_pagos ?? false)) {
-        $ids = array_values(array_unique(array_map(fn($r)=>(int)$r['id'], $rows)));
-        if ($ids) {
-            $in = implode(',', array_fill(0, count($ids), '?'));
-            $cnt = $db->prepare("SELECT venta_id, COUNT(*) n FROM venta_pagos WHERE venta_id IN ($in) GROUP BY venta_id");
-            $cnt->execute($ids);
-            $mixmap = [];
-            foreach ($cnt->fetchAll() as $c) $mixmap[(int)$c['venta_id']] = ((int)$c['n']) > 1;
-            foreach ($rows as &$rr) $rr['es_mixto'] = $mixmap[(int)$rr['id']] ?? false;
-            unset($rr);
+    foreach ($ventas as $v) {
+        $detalle = $pagos_por_venta[(int)$v['id']] ?? [];
+        if (!empty($detalle)) {
+            // Venta con desglose real: una fila por método
+            $es_mixto = count($detalle) > 1;
+            foreach ($detalle as $p) {
+                if ($metodo !== 'todos' && $p['metodo_pago'] !== $metodo) continue;
+                $rows[] = [
+                    'id'=>$v['id'], 'tipo_comprobante'=>$v['tipo_comprobante'], 'serie'=>$v['serie'],
+                    'numero'=>$v['numero'], 'fecha'=>$v['fecha'], 'cliente'=>$v['cliente'],
+                    'metodo_pago'=>$p['metodo_pago'], 'total'=>$p['monto'], 'es_mixto'=>$es_mixto,
+                ];
+            }
+        } else {
+            // Venta sin detalle (antigua): usar el método único de la venta.
+            // metodo_pago puede ser "efectivo + yape"; lo tomamos tal cual como una sola fila.
+            $mp = $v['metodo_pago'];
+            if ($metodo !== 'todos') {
+                // Si filtran por un método, incluir solo si coincide exactamente
+                if ($mp !== $metodo) continue;
+            }
+            $rows[] = [
+                'id'=>$v['id'], 'tipo_comprobante'=>$v['tipo_comprobante'], 'serie'=>$v['serie'],
+                'numero'=>$v['numero'], 'fecha'=>$v['fecha'], 'cliente'=>$v['cliente'],
+                'metodo_pago'=>$mp, 'total'=>$v['total'], 'es_mixto'=>false,
+            ];
         }
     }
+
     return ['rows'=>$rows, 'desde'=>$desde, 'hasta'=>$hasta, 'metodo'=>$metodo, 'mixto'=>$tiene_pagos];
 };
 

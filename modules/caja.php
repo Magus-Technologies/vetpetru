@@ -1,5 +1,110 @@
 <?php
 $page = 'caja'; $pageTitle = 'Caja / Finanzas';
+
+// ════════════════════════════════════════════════════════════════
+// Handlers AJAX (ANTES del header → responden JSON puro)
+//  - detalle_caja: todos los movimientos de una caja (cerrada o no)
+//  - detalle_recibo: los productos/servicios de una venta
+// ════════════════════════════════════════════════════════════════
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array(($_POST['ajax'] ?? ''), ['detalle_caja','detalle_recibo'], true)) {
+    require_once __DIR__ . '/../includes/config.php';
+    if (function_exists('requireLogin')) requireLogin();
+    $db = getDB();
+    header('Content-Type: application/json');
+
+    $metodo_icons = ['efectivo'=>'💵','yape'=>'📱','plin'=>'📱','tarjeta_debito'=>'💳','tarjeta_credito'=>'💳','transferencia'=>'🏦'];
+    $cat_labels = ['servicio'=>'Servicio','producto'=>'Producto','gasto_administrativo'=>'Gasto Admin.','compra_insumos'=>'Compra Insumos','otro'=>'Otro'];
+
+    // ── Movimientos de una caja específica ──
+    if ($_POST['ajax'] === 'detalle_caja') {
+        $caja_id = (int)($_POST['caja_id'] ?? 0);
+        $cab = $db->prepare("SELECT ca.*, u.nombre AS cajero FROM cajas ca JOIN usuarios u ON u.id=ca.usuario_id WHERE ca.id=?");
+        $cab->execute([$caja_id]); $cab = $cab->fetch();
+        if (!$cab) { echo json_encode(['ok'=>false,'error'=>'Caja no encontrada']); exit; }
+
+        $st = $db->prepare("SELECT * FROM movimientos_caja WHERE caja_id=? ORDER BY created_at ASC, id ASC");
+        $st->execute([$caja_id]); $movs = $st->fetchAll();
+
+        $ing = 0; $egr = 0; $out = [];
+        foreach ($movs as $m) {
+            if ($m['tipo']==='ingreso') $ing += (float)$m['monto']; else $egr += (float)$m['monto'];
+            $out[] = [
+                'tipo'      => $m['tipo'],
+                'concepto'  => $m['concepto'],
+                'hora'      => date('H:i', strtotime($m['created_at'])),
+                'fecha'     => date('d/m/Y', strtotime($m['created_at'])),
+                'metodo'    => ($metodo_icons[$m['metodo_pago']] ?? '') . ' ' . ucfirst(str_replace('_',' ', $m['metodo_pago'])),
+                'categoria' => $cat_labels[$m['categoria']] ?? $m['categoria'],
+                'monto'     => number_format((float)$m['monto'], 2),
+                'venta_id'  => $m['venta_id'] ? (int)$m['venta_id'] : null,
+            ];
+        }
+        echo json_encode([
+            'ok' => true,
+            'caja' => [
+                'cajero'    => $cab['cajero'],
+                'apertura'  => date('d/m/Y H:i', strtotime($cab['fecha_apertura'])),
+                'cierre'    => $cab['fecha_cierre'] ? date('d/m/Y H:i', strtotime($cab['fecha_cierre'])) : null,
+                'm_apertura'=> number_format((float)$cab['monto_apertura'], 2),
+                'm_cierre'  => $cab['monto_cierre']!==null ? number_format((float)$cab['monto_cierre'], 2) : null,
+                'estado'    => $cab['estado'],
+                'ingresos'  => number_format($ing, 2),
+                'egresos'   => number_format($egr, 2),
+                'balance'   => number_format((float)$cab['monto_apertura'] + $ing - $egr, 2),
+            ],
+            'movimientos' => $out,
+        ]); exit;
+    }
+
+    // ── Productos/servicios de un recibo (venta) ──
+    if ($_POST['ajax'] === 'detalle_recibo') {
+        $venta_id = (int)($_POST['venta_id'] ?? 0);
+        $v = $db->prepare("SELECT v.*, c.nombre AS cliente FROM ventas v LEFT JOIN clientes c ON c.id=v.cliente_id WHERE v.id=?");
+        $v->execute([$venta_id]); $v = $v->fetch();
+        if (!$v) { echo json_encode(['ok'=>false,'error'=>'Recibo no encontrado']); exit; }
+
+        $items = $db->prepare("SELECT tipo,descripcion,cantidad,precio_unitario,descuento,subtotal FROM venta_items WHERE venta_id=? ORDER BY id ASC");
+        $items->execute([$venta_id]); $items = $items->fetchAll();
+
+        // Detalle de pagos (puede ser mixto)
+        $pagos = [];
+        try {
+            if (!empty($db->query("SHOW TABLES LIKE 'venta_pagos'")->fetchAll())) {
+                $pp = $db->prepare("SELECT metodo_pago, monto FROM venta_pagos WHERE venta_id=? ORDER BY id ASC");
+                $pp->execute([$venta_id]);
+                foreach ($pp->fetchAll() as $p) $pagos[] = ucfirst(str_replace('_',' ',$p['metodo_pago'])).': S/ '.number_format((float)$p['monto'],2);
+            }
+        } catch(Exception $e){}
+
+        $out_items = [];
+        foreach ($items as $it) {
+            $out_items[] = [
+                'tipo'        => $it['tipo'],
+                'descripcion' => $it['descripcion'],
+                'cantidad'    => (int)$it['cantidad'],
+                'precio'      => number_format((float)$it['precio_unitario'], 2),
+                'descuento'   => number_format((float)$it['descuento'], 2),
+                'subtotal'    => number_format((float)$it['subtotal'], 2),
+            ];
+        }
+        echo json_encode([
+            'ok' => true,
+            'recibo' => [
+                'numero'    => ($v['serie'] ?: '---').'-'.str_pad($v['numero'] ?? 0, 8, '0', STR_PAD_LEFT),
+                'comprobante'=> ucfirst($v['tipo_comprobante']),
+                'fecha'     => date('d/m/Y H:i', strtotime($v['fecha'])),
+                'cliente'   => $v['cliente'] ?: '—',
+                'subtotal'  => number_format((float)$v['subtotal'], 2),
+                'igv'       => number_format((float)$v['igv'], 2),
+                'descuento' => number_format((float)$v['descuento'], 2),
+                'total'     => number_format((float)$v['total'], 2),
+                'pagos'     => $pagos,
+            ],
+            'items' => $out_items,
+        ]); exit;
+    }
+}
+
 require_once __DIR__ . '/../includes/header.php';
 $db = getDB();
 $action = $_GET['action'] ?? 'list';
@@ -93,6 +198,9 @@ $cat_labels = ['servicio'=>'Servicio','producto'=>'Producto','gasto_administrati
           <div class="text-sm font-med"><?= clean($m['concepto']) ?></div>
           <div class="text-xs text-muted"><?= date('H:i',strtotime($m['created_at'])) ?> · <?= $metodo_icons[$m['metodo_pago']]??'' ?> <?= ucfirst(str_replace('_',' ',$m['metodo_pago'])) ?> · <?= $cat_labels[$m['categoria']]??$m['categoria'] ?></div>
         </div>
+        <?php if(!empty($m['venta_id'])): ?>
+        <button onclick="verRecibo(<?= (int)$m['venta_id'] ?>)" style="border:1px solid var(--border);background:var(--bg2);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px;white-space:nowrap" title="Ver productos del recibo">🧾</button>
+        <?php endif; ?>
         <span style="font-size:14px;font-weight:700;color:<?= $m['tipo']==='ingreso'?'var(--green)':'var(--red)' ?>"><?= $m['tipo']==='ingreso'?'+':'-' ?>S/. <?= number_format($m['monto'],2) ?></span>
       </div>
       <?php endforeach; ?>
@@ -154,13 +262,13 @@ $cat_labels = ['servicio'=>'Servicio','producto'=>'Producto','gasto_administrati
 <!-- HISTORIAL DE CAJAS -->
 <?php if(!empty($historial_cajas)): ?>
 <div class="card mt-2">
-  <div class="sec-header"><div class="sec-title">Historial de cajas</div></div>
+  <div class="sec-header"><div class="sec-title">Historial de cajas</div><div class="text-xs text-muted">Haz clic en una caja para ver sus movimientos</div></div>
   <div class="table-wrap">
     <table class="vtable">
-      <thead><tr><th>Apertura</th><th>Cierre</th><th>Cajero</th><th>Apertura (S/.)</th><th>Ingresos</th><th>Egresos</th><th>Balance</th><th>Estado</th></tr></thead>
+      <thead><tr><th>Apertura</th><th>Cierre</th><th>Cajero</th><th>Apertura (S/.)</th><th>Ingresos</th><th>Egresos</th><th>Balance</th><th>Estado</th><th></th></tr></thead>
       <tbody>
         <?php foreach($historial_cajas as $h): ?>
-        <tr>
+        <tr onclick="verCaja(<?= (int)$h['id'] ?>)" style="cursor:pointer" class="caja-row">
           <td class="text-muted"><?= date('d/m/Y H:i',strtotime($h['fecha_apertura'])) ?></td>
           <td class="text-muted"><?= $h['fecha_cierre'] ? date('d/m/Y H:i',strtotime($h['fecha_cierre'])) : '—' ?></td>
           <td><?= clean($h['cajero']) ?></td>
@@ -169,6 +277,7 @@ $cat_labels = ['servicio'=>'Servicio','producto'=>'Producto','gasto_administrati
           <td class="font-med" style="color:var(--red)">S/. <?= number_format($h['total_egresos'],2) ?></td>
           <td class="font-bold">S/. <?= number_format($h['monto_apertura']+$h['total_ingresos']-$h['total_egresos'],2) ?></td>
           <td><span class="badge <?= $h['estado']==='abierta'?'b-teal':'b-gray' ?>"><?= ucfirst($h['estado']) ?></span></td>
+          <td style="text-align:right;color:var(--text3)">👁️ ver</td>
         </tr>
         <?php endforeach; ?>
       </tbody>
@@ -176,5 +285,130 @@ $cat_labels = ['servicio'=>'Servicio','producto'=>'Producto','gasto_administrati
   </div>
 </div>
 <?php endif; ?>
+
+<!-- MODAL: Detalle de caja (movimientos del día) -->
+<div id="caja-modal" class="modal-overlay" style="display:none">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-header">
+      <div class="modal-title">📋 Movimientos de la caja</div>
+      <button class="modal-close" onclick="document.getElementById('caja-modal').style.display='none'">✕</button>
+    </div>
+    <div class="modal-body" id="caja-modal-body" style="max-height:70vh;overflow-y:auto">
+      <div class="text-center text-muted" style="padding:30px">Cargando…</div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: Detalle de recibo (productos) -->
+<div id="recibo-modal" class="modal-overlay" style="display:none;z-index:1100">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-header">
+      <div class="modal-title">🧾 Detalle del recibo</div>
+      <button class="modal-close" onclick="document.getElementById('recibo-modal').style.display='none'">✕</button>
+    </div>
+    <div class="modal-body" id="recibo-modal-body" style="max-height:70vh;overflow-y:auto">
+      <div class="text-center text-muted" style="padding:30px">Cargando…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+function _waMoney(s){ return 'S/ ' + s; }
+
+// ── Ver movimientos de una caja ──
+function verCaja(id){
+  var modal = document.getElementById('caja-modal');
+  var body  = document.getElementById('caja-modal-body');
+  body.innerHTML = '<div class="text-center text-muted" style="padding:30px">Cargando…</div>';
+  modal.style.display = 'flex';
+  fetch('<?= BASE_URL ?>/index.php?p=caja', {
+    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'ajax=detalle_caja&caja_id='+id
+  }).then(r=>r.json()).then(function(d){
+    if(!d.ok){ body.innerHTML = '<div class="text-center text-muted" style="padding:30px">'+(d.error||'Error')+'</div>'; return; }
+    var c = d.caja;
+    var h = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">'
+      + _box('Cajero', c.cajero) + _box('Estado', c.estado==='abierta'?'🟢 Abierta':'🔒 Cerrada')
+      + _box('Apertura', c.apertura+' · S/ '+c.m_apertura)
+      + _box('Cierre', c.cierre ? (c.cierre+(c.m_cierre?' · S/ '+c.m_cierre:'')) : '—')
+      + '</div>';
+    h += '<div style="display:flex;gap:8px;margin-bottom:14px">'
+      + '<div style="flex:1;background:var(--green-l,#ecfdf5);border-radius:8px;padding:9px 12px"><div style="font-size:11px;color:var(--text3)">Ingresos</div><div style="font-weight:800;color:var(--green,#10b981)">S/ '+c.ingresos+'</div></div>'
+      + '<div style="flex:1;background:var(--red-l,#fef2f2);border-radius:8px;padding:9px 12px"><div style="font-size:11px;color:var(--text3)">Egresos</div><div style="font-weight:800;color:var(--red,#ef4444)">S/ '+c.egresos+'</div></div>'
+      + '<div style="flex:1;background:var(--bg3,#f1f5f9);border-radius:8px;padding:9px 12px"><div style="font-size:11px;color:var(--text3)">Balance</div><div style="font-weight:800">S/ '+c.balance+'</div></div>'
+      + '</div>';
+    if(d.movimientos.length===0){
+      h += '<div class="text-center text-muted" style="padding:24px">Sin movimientos en esta caja.</div>';
+    } else {
+      h += '<table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid var(--border);border-radius:8px;overflow:hidden">';
+      h += '<thead><tr style="background:var(--bg3,#f1f5f9)"><th style="text-align:left;padding:8px 10px">Hora</th><th style="text-align:left;padding:8px 10px">Concepto</th><th style="text-align:left;padding:8px 10px">Método</th><th style="text-align:right;padding:8px 10px">Monto</th><th></th></tr></thead><tbody>';
+      d.movimientos.forEach(function(m){
+        var color = m.tipo==='ingreso' ? 'var(--green,#10b981)' : 'var(--red,#ef4444)';
+        var signo = m.tipo==='ingreso' ? '+' : '−';
+        var verBtn = m.venta_id ? '<button onclick="verRecibo('+m.venta_id+')" style="border:1px solid var(--border);background:var(--bg2);border-radius:6px;padding:3px 8px;cursor:pointer;font-size:11px;white-space:nowrap">🧾 recibo</button>' : '';
+        h += '<tr style="border-top:1px solid var(--border)">'
+          + '<td style="padding:7px 10px;color:var(--text3)">'+m.hora+'</td>'
+          + '<td style="padding:7px 10px">'+_esc(m.concepto)+'<div style="font-size:10px;color:var(--text3)">'+m.categoria+'</div></td>'
+          + '<td style="padding:7px 10px">'+_esc(m.metodo)+'</td>'
+          + '<td style="padding:7px 10px;text-align:right;font-weight:700;color:'+color+'">'+signo+'S/ '+m.monto+'</td>'
+          + '<td style="padding:7px 10px;text-align:right">'+verBtn+'</td>'
+          + '</tr>';
+      });
+      h += '</tbody></table>';
+    }
+    body.innerHTML = h;
+  }).catch(function(){ body.innerHTML='<div class="text-center text-muted" style="padding:30px">Error de conexión</div>'; });
+}
+
+// ── Ver productos de un recibo ──
+function verRecibo(id){
+  var modal = document.getElementById('recibo-modal');
+  var body  = document.getElementById('recibo-modal-body');
+  body.innerHTML = '<div class="text-center text-muted" style="padding:30px">Cargando…</div>';
+  modal.style.display = 'flex';
+  fetch('<?= BASE_URL ?>/index.php?p=caja', {
+    method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:'ajax=detalle_recibo&venta_id='+id
+  }).then(r=>r.json()).then(function(d){
+    if(!d.ok){ body.innerHTML = '<div class="text-center text-muted" style="padding:30px">'+(d.error||'Error')+'</div>'; return; }
+    var r = d.recibo;
+    var h = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px">'
+      + _box('N° Recibo', r.numero) + _box('Comprobante', r.comprobante)
+      + _box('Fecha', r.fecha) + _box('Cliente', r.cliente) + '</div>';
+    h += '<table style="width:100%;border-collapse:collapse;font-size:13px;border:1px solid var(--border);border-radius:8px;overflow:hidden">';
+    h += '<thead><tr style="background:var(--bg3,#f1f5f9)"><th style="text-align:left;padding:8px 10px">Producto / Servicio</th><th style="text-align:center;padding:8px 10px">Cant.</th><th style="text-align:right;padding:8px 10px">P. Unit</th><th style="text-align:right;padding:8px 10px">Subtotal</th></tr></thead><tbody>';
+    if(d.items.length===0){
+      h += '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:20px">Sin items registrados.</td></tr>';
+    } else {
+      d.items.forEach(function(it){
+        var icon = it.tipo==='servicio' ? '🩺' : '📦';
+        h += '<tr style="border-top:1px solid var(--border)">'
+          + '<td style="padding:7px 10px">'+icon+' '+_esc(it.descripcion)+'</td>'
+          + '<td style="padding:7px 10px;text-align:center">'+it.cantidad+'</td>'
+          + '<td style="padding:7px 10px;text-align:right">S/ '+it.precio+'</td>'
+          + '<td style="padding:7px 10px;text-align:right;font-weight:600">S/ '+it.subtotal+'</td>'
+          + '</tr>';
+      });
+    }
+    h += '</tbody></table>';
+    // Totales
+    h += '<div style="margin-top:12px;text-align:right;font-size:13px">';
+    if(parseFloat(r.descuento)>0) h += '<div style="color:var(--text3)">Descuento: −S/ '+r.descuento+'</div>';
+    if(parseFloat(r.igv)>0) h += '<div style="color:var(--text3)">IGV: S/ '+r.igv+'</div>';
+    h += '<div style="font-size:17px;font-weight:800;color:var(--primary,#0d9488);margin-top:4px">Total: S/ '+r.total+'</div>';
+    h += '</div>';
+    // Pagos (si mixto)
+    if(r.pagos && r.pagos.length){
+      h += '<div style="margin-top:12px;background:var(--bg3,#f1f5f9);border-radius:8px;padding:10px 12px"><div style="font-size:11px;color:var(--text3);margin-bottom:4px">Forma de pago</div>';
+      r.pagos.forEach(function(p){ h += '<div style="font-size:13px">💳 '+_esc(p)+'</div>'; });
+      h += '</div>';
+    }
+    body.innerHTML = h;
+  }).catch(function(){ body.innerHTML='<div class="text-center text-muted" style="padding:30px">Error de conexión</div>'; });
+}
+
+function _box(label,val){ return '<div style="background:var(--bg3,#f1f5f9);border-radius:8px;padding:8px 11px"><div style="font-size:10px;color:var(--text3);text-transform:uppercase">'+label+'</div><div style="font-size:13px;font-weight:600">'+_esc(val)+'</div></div>'; }
+function _esc(s){ var d=document.createElement('div'); d.textContent=(s==null?'':s); return d.innerHTML; }
+</script>
 
 <?php require_once __DIR__ . '/../includes/footer.php'; ?>
