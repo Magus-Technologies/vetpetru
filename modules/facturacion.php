@@ -202,6 +202,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
+                // ── Cerrar cuenta por cobrar si viene de ahí ──
+                $cta_id_post = (int)($_POST['cuenta_id'] ?? 0);
+                if ($cta_id_post) {
+                    $db->prepare("UPDATE cuentas SET estado='facturado', fecha_cierre=NOW(), venta_id=? WHERE id=? AND estado='abierta'")
+                       ->execute([$venta_id, $cta_id_post]);
+                }
+
                 $_SESSION['flash_ok'] = $sunat_xml_generado
                     ? 'Venta registrada. XML generado correctamente.'
                     : 'Venta registrada (PDF/ticket sin XML SUNAT).';
@@ -429,11 +436,49 @@ if (isset($_SESSION['flash_error'])) {
     echo '<div class="alert alert-success mb-3" style="padding:12px 16px;border-radius:8px;font-size:14px">✅ ' . htmlspecialchars($_SESSION['flash_ok']) . '</div>';
     unset($_SESSION['flash_ok']);
 }
+
+// ── PRELOAD DESDE CUENTA POR COBRAR ──
+$_cta_id = (int)($_GET['cta'] ?? 0);
+$_cta_preload = null;
+if ($_cta_id) {
+    $ctaRow = $db->prepare("SELECT cu.*, cl.nombre AS cliente_nombre, cl.dni, cl.ruc, cl.ce, cl.pasaporte,
+                                   m.id AS mascota_id, m.nombre AS mascota_nombre, m.especie, m.raza
+                            FROM cuentas cu
+                            LEFT JOIN clientes cl ON cl.id=cu.cliente_id
+                            LEFT JOIN mascotas m ON m.id=cu.mascota_id
+                            WHERE cu.id=? AND cu.estado='abierta'");
+    $ctaRow->execute([$_cta_id]);
+    $ctaRow = $ctaRow->fetch();
+    if ($ctaRow) {
+        $ctaItems = $db->prepare("SELECT descripcion, cantidad, precio_unitario, tipo FROM cuenta_items WHERE cuenta_id=? ORDER BY fecha, id");
+        $ctaItems->execute([$_cta_id]);
+        $ctaItems = $ctaItems->fetchAll();
+        $ctaAbonado = (float)$db->query("SELECT COALESCE(SUM(monto),0) FROM cuenta_abonos WHERE cuenta_id=$_cta_id")->fetchColumn();
+        $_cta_preload = [
+            'cuenta_id'  => $_cta_id,
+            'cliente_id' => (int)$ctaRow['cliente_id'],
+            'cliente_nombre' => $ctaRow['cliente_nombre'],
+            'mascota_id' => (int)$ctaRow['mascota_id'],
+            'mascota_label' => $ctaRow['mascota_nombre'] ? $ctaRow['mascota_nombre'].' ('.$ctaRow['cliente_nombre'].')' : '',
+            'items' => array_map(fn($i)=>['desc'=>$i['descripcion'],'qty'=>(float)$i['cantidad'],'precio'=>(float)$i['precio_unitario'],'tipo'=>$i['tipo']==='producto'?'producto':'servicio'], $ctaItems),
+            'abonado' => $ctaAbonado,
+        ];
+    }
+}
 ?>
 <div class="card" style="max-width:1400px;width:100%">
   <div class="sec-header mb-3"><div class="sec-title">Nueva Venta</div><a href="?p=facturacion" class="btn btn-sm btn-ghost">← Volver</a></div>
   <form method="POST" id="venta-form">
     <input type="hidden" name="action" value="save">
+    <input type="hidden" name="cuenta_id" id="cta-id" value="<?= $_cta_preload ? (int)$_cta_preload['cuenta_id'] : '' ?>">
+
+    <?php if ($_cta_preload): ?>
+    <div class="alert alert-info mb-3" style="padding:12px 16px;border-radius:8px;font-size:14px;background:#e0f2fe;border:1px solid #0284c7;color:#0c4a6e">
+      💳 Facturando desde <strong>Cuenta por cobrar #<?= (int)$_cta_preload['cuenta_id'] ?></strong> — Cliente: <strong><?= clean($ctaRow['cliente_nombre']) ?></strong>
+      <?php if ($_cta_preload['abonado'] > 0): ?> · Abonos previos: <strong>S/ <?= number_format($_cta_preload['abonado'],2) ?></strong> (aplicados como descuento)<?php endif; ?>
+      · <a href="?p=cuentas&id=<?= (int)$_cta_preload['cuenta_id'] ?>" style="color:#0c4a6e;text-decoration:underline">← volver a la cuenta</a>
+    </div>
+    <?php endif; ?>
 
     <div class="form-body" style="display:grid;grid-template-columns:1fr 340px;gap:16px;align-items:start">
       <div class="form-col-left"><!-- COLUMNA IZQUIERDA -->
@@ -1017,6 +1062,7 @@ var MASCOTAS  = <?= json_encode(array_values($_mas_js ?? [])) ?>;
 var SERIES    = <?= json_encode($_series_sede_actual) ?>;
 var itemIdx   = 0;
 var _cliSel   = null;
+var PRELOAD_CTA = <?= json_encode($_cta_preload ?? null) ?>;
 
 // ── SERIE Y NÚMERO ──
 function actualizarSerieNum() {
@@ -1419,7 +1465,78 @@ function limpiarMascota() {
 // Inicializar
 document.addEventListener('DOMContentLoaded', function() {
     actualizarSerieNum();
+    if (PRELOAD_CTA) preloadCuenta();
 });
+
+// ── PRECARGA DESDE CUENTA POR COBRAR ──
+function preloadCuenta() {
+  // 1. Seleccionar cliente
+  if (PRELOAD_CTA.cliente_id) {
+    var c = CLIENTES.find(function(x){ return x.id === PRELOAD_CTA.cliente_id; });
+    if (c) seleccionarCliente(c);
+    else {
+      // Cliente no está en la lista filtrada — crear objeto mínimo
+      seleccionarCliente({
+        id: PRELOAD_CTA.cliente_id,
+        nombre: PRELOAD_CTA.cliente_nombre || 'Cliente #'+PRELOAD_CTA.cliente_id,
+        dni: '', ruc: '', ce: '', pasaporte: ''
+      });
+    }
+  }
+  // 2. Seleccionar mascota
+  if (PRELOAD_CTA.mascota_id) {
+    var m = MASCOTAS.find(function(x){ return x.id === PRELOAD_CTA.mascota_id; });
+    if (m) seleccionarMascota(m);
+  }
+  // 3. Default a FACTURA (permite cambiar a boleta)
+  var selTipo = document.getElementById('sel-tipo');
+  if (selTipo) { selTipo.value = 'factura'; actualizarSerieNum(); }
+  // 4. Cargar ítems de la cuenta
+  (PRELOAD_CTA.items || []).forEach(function(it) {
+    var idx = itemIdx++;
+    var row = document.createElement('tr');
+    row.className = 'item-row';
+    var tagStyle = it.tipo === 'producto'
+      ? 'background:#dbeafe;color:#1e3a8a;border:1px solid #93c5fd'
+      : 'background:#d1fae5;color:#065f46;border:1px solid #6ee7b7';
+    var icon = it.tipo === 'producto' ? '📦' : '🩺';
+    row.innerHTML = '<td style="padding:6px 4px">'
+      + '<input type="hidden" name="item_tipo[]" value="'+it.tipo+'">'
+      + '<input type="hidden" name="item_ref[]" id="ref_'+idx+'" value="0">'
+      + '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">'
+      + '<span style="font-size:10px;font-weight:700;padding:2px 7px;border-radius:999px;'+tagStyle+';white-space:nowrap">'+icon+' '+it.tipo.charAt(0).toUpperCase()+it.tipo.slice(1)+'</span>'
+      + '</div>'
+      + '<input class="form-input" name="item_desc[]" id="desc_'+idx+'" value="'+it.desc.replace(/"/g,'&quot;')+'" style="font-size:12px">'
+      + '</td>'
+      + '<td style="padding:6px 4px;text-align:center">'
+      + '<input class="form-input" type="number" name="item_qty[]" id="qty_'+idx+'" value="'+it.qty+'" min="1" style="text-align:center;font-size:12px;width:60px" oninput="calcTotal()">'
+      + '</td>'
+      + '<td style="padding:6px 4px;text-align:right">'
+      + '<input class="form-input" type="number" step="0.01" name="item_precio[]" id="precio_'+idx+'" value="'+it.precio.toFixed(2)+'" style="text-align:right;font-size:12px;width:100px" oninput="calcSubtotal('+idx+');calcTotal()">'
+      + '</td>'
+      + '<td style="padding:6px 4px;text-align:right;font-weight:600;font-size:13px;color:var(--teal-d)" id="sub_'+idx+'">S/. 0.00</td>'
+      + '<td style="padding:6px 4px;text-align:center">'
+      + '<button type="button" onclick="removeItem(this)" class="btn btn-xs" style="color:var(--red);padding:3px 7px">✕</button>'
+      + '</td>';
+    document.getElementById('items-list').appendChild(row);
+    calcSubtotal(idx);
+  });
+  showHeader();
+  // 5. Descuento = abonado (para que total = saldo pendiente)
+  if (PRELOAD_CTA.abonado > 0) {
+    var inpDesc = document.getElementById('inp-desc');
+    if (inpDesc) { inpDesc.value = PRELOAD_CTA.abonado.toFixed(2); }
+  }
+  calcTotal();
+  // 6. Auto-agregar pago por el saldo
+  var txtTotal = document.getElementById('tot-total').textContent;
+  var totalVenta = parseFloat((txtTotal.match(/\d[\d.,-]*/) || ['0'])[0].replace(',', '.')) || 0;
+  if (totalVenta > 0) {
+    var selMetodo = document.getElementById('sel-nuevo-metodo');
+    pagosUI.push({ metodo: selMetodo ? selMetodo.value : 'efectivo', monto: Math.round(totalVenta * 100) / 100 });
+    renderPagosUI();
+  }
+}
 
 function showHeader() {
     var has = document.querySelector('#items-list tr');

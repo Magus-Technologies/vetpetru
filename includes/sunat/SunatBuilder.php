@@ -160,7 +160,7 @@ class SunatBuilder
                 'descripcion'  => $it['descripcion'],
                 'cantidad'     => (float) $it['cantidad'],
                 'precio'       => (float) $it['precio_unitario'],
-                'tipo_igv'     => $aplica_igv ? 'gravado' : 'inafecto',
+                'tipo_igv'     => $aplica_igv ? 'gravado' : 'exonerado',
             ];
         }
         return $out;

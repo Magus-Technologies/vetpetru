@@ -29,6 +29,10 @@ $db->exec("CREATE TABLE IF NOT EXISTS cuenta_abonos (
   id INT AUTO_INCREMENT PRIMARY KEY, cuenta_id INT NOT NULL, fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
   monto DECIMAL(10,2) NOT NULL, metodo_pago VARCHAR(40) DEFAULT 'efectivo',
   usuario_id INT NULL, nota VARCHAR(200) NULL, INDEX(cuenta_id))");
+// Agregar estado 'facturado' al ENUM (safe - solo modifica si la columna no lo tiene)
+try {
+  $db->exec("ALTER TABLE cuentas MODIFY COLUMN estado ENUM('abierta','facturado','cerrada','anulada') DEFAULT 'abierta'");
+} catch(Exception $e) { /* ya tiene el estado o versión previa */ }
 
 // Helpers de saldo
 function cta_consumido($db, $cuenta_id) {
@@ -300,25 +304,22 @@ $msg = $_GET['msg'] ?? '';
 
       <?php if($abierta): ?>
       <div class="card">
-        <div class="sec-header"><div class="sec-title">Cobrar y cerrar</div></div>
-        <div class="text-sm text-muted mb-2">Genera un comprobante con todo el detalle y registra el pago del saldo (S/ <?= number_format(max($saldo,0),2) ?>).</div>
-        <form method="POST" onsubmit="return confirm('¿Cobrar y cerrar la cuenta? Se generará el comprobante.')">
-          <input type="hidden" name="accion" value="cerrar_cuenta">
-          <input type="hidden" name="cuenta_id" value="<?= $cuenta_id ?>">
-          <div class="form-row">
-            <div class="form-group"><label class="form-label">Comprobante</label>
-              <select class="form-input" name="tipo_comprobante"><option value="boleta">Boleta</option><option value="factura">Factura</option><option value="ticket">Ticket</option></select></div>
-            <div class="form-group"><label class="form-label">Método de pago</label>
-              <select class="form-input" name="metodo_pago"><?php foreach($_metodos as $k=>$v): ?><option value="<?= $k ?>"><?= $v ?></option><?php endforeach; ?></select></div>
-          </div>
-          <button class="btn btn-primary w-full"><i class="ti ti-check"></i> Cobrar y cerrar — S/ <?= number_format(max($saldo,0),2) ?></button>
-        </form>
+        <div class="sec-header"><div class="sec-title">Cobrar cuenta</div></div>
+        <div class="text-sm text-muted mb-2">Genera un comprobante electrónico con todo el detalle de la cuenta.</div>
+        <div class="flex gap-2 mb-2" style="flex-wrap:wrap">
+          <div style="flex:1;min-width:100px;background:var(--bg3);border-radius:8px;padding:8px 12px"><div class="text-xs text-muted">Total consumido</div><div style="font-size:15px;font-weight:700">S/ <?= number_format($consumido,2) ?></div></div>
+          <div style="flex:1;min-width:100px;background:var(--bg3);border-radius:8px;padding:8px 12px"><div class="text-xs text-muted">Ya abonado</div><div style="font-size:15px;font-weight:700;color:var(--green,#10b981)">S/ <?= number_format($abonado,2) ?></div></div>
+          <div style="flex:1;min-width:100px;background:#fef2f2;border-radius:8px;padding:8px 12px"><div class="text-xs text-muted">Por cobrar</div><div style="font-size:15px;font-weight:700;color:var(--red,#ef4444)">S/ <?= number_format(max($saldo,0),2) ?></div></div>
+        </div>
+        <a href="?p=facturacion&action=nueva&cta=<?= $cuenta_id ?>" class="btn btn-primary w-full" style="text-decoration:none;display:flex;align-items:center;justify-content:center;gap:6px">
+          <i class="ti ti-receipt"></i> Cobrar — ir a Facturación
+        </a>
       </div>
       <?php else: ?>
       <div class="card" style="text-align:center;padding:20px">
         <div style="font-size:32px">✅</div>
-        <div class="font-bold">Cuenta cerrada</div>
-        <?php if($c['venta_id']): ?><div class="text-sm text-muted">Comprobante generado (venta #<?= $c['venta_id'] ?>)</div><?php endif; ?>
+        <div class="font-bold"><?= $c['estado']==='facturado' ? 'Cuenta facturada' : 'Cuenta cerrada' ?></div>
+        <?php if($c['venta_id']): ?><div class="text-sm text-muted">Comprobante generado (venta #<?= $c['venta_id'] ?>) · <a href="?p=facturacion&action=ver&id=<?= $c['venta_id'] ?>">ver comprobante</a></div><?php endif; ?>
       </div>
       <?php endif; ?>
     </div>
