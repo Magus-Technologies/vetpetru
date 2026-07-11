@@ -7,7 +7,7 @@ $allowed = [
   'dashboard','citas','clientes','mascotas',
   'historial','recetas','evolucion','examenes','vacunas',
   'cirugias','hospital',
-  'grooming','petshop',
+  'grooming','petshop','servicios','solicitudes',
   'farmacia','inventario',
   'facturacion','notas_credito','plantillas','caja','personal','reportes',
   'whatsapp','portal','buscar',
