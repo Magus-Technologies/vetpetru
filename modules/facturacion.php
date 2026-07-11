@@ -68,6 +68,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (strlen($ruc) !== 11) {
                 $msg = 'cli_factura_ruc'; $action = 'nueva'; $save_blocked = true;
             }
+        } elseif ($tipo === 'boleta') {
+            // BOLETA: si el cliente se identifica solo con RUC, este debe ser de
+            // persona natural (RUC 10). RUC 20 (persona jurídica) exige factura.
+            $st = $db->prepare("SELECT COALESCE(dni,'') dni, COALESCE(ce,'') ce, COALESCE(pasaporte,'') pasaporte, COALESCE(ruc,'') ruc FROM clientes WHERE id=?");
+            $st->execute([$cliente_id]);
+            $cdoc = $st->fetch();
+            $sin_otro_doc = strlen(trim($cdoc['dni'])) !== 8
+                && strlen(trim($cdoc['ce'])) < 9
+                && trim($cdoc['pasaporte']) === '';
+            $ruc = trim($cdoc['ruc']);
+            if ($sin_otro_doc && strlen($ruc) === 11 && substr($ruc, 0, 2) === '20') {
+                $msg = 'cli_boleta_ruc20'; $action = 'nueva'; $save_blocked = true;
+            }
         }
         if ($save_blocked) {
             // No procesamos el resto del bloque save; el form se vuelve a renderizar con $msg.
@@ -409,6 +422,7 @@ $_sunat_msg   = clean($_GET['sunat_msg'] ?? '');
 <?php if(($msg??'')==='cobrado'): ?><div class="alert alert-success mb-2">✅ Pago registrado.</div><?php endif; ?>
 <?php if(($msg??'')==='cli_factura_req'): ?><div class="alert alert-warn mb-2">⚠️ Para emitir una <strong>factura</strong> debes seleccionar un cliente con RUC válido.</div><?php endif; ?>
 <?php if(($msg??'')==='cli_factura_ruc'): ?><div class="alert alert-warn mb-2">⚠️ El cliente seleccionado no tiene <strong>RUC válido</strong>. La factura requiere RUC de 11 dígitos. Edita el cliente o emite una boleta.</div><?php endif; ?>
+<?php if(($msg??'')==='cli_boleta_ruc20'): ?><div class="alert alert-warn mb-2">⚠️ El cliente tiene <strong>RUC 20 (persona jurídica)</strong>. A una empresa le corresponde <strong>factura</strong>, no boleta.</div><?php endif; ?>
 <?php if(($msg??'')==='error_items'): ?><div class="alert alert-warn mb-2">⚠️ Debes agregar al menos un ítem con precio mayor a 0.</div><?php endif; ?>
 
 <?php if($action==='nueva'): ?>

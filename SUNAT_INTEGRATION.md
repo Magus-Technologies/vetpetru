@@ -202,8 +202,10 @@ Estructura clave del JSON (la API Laravel/Greenter lo espera así):
 ```
 
 Reglas que aprendí en VetPro:
-- Para **boleta a "varios"** (cliente sin DNI): `tipoDoc: "0"`, `numDoc: "00000000"`, `rznSocial: "VARIOS"`.
+- Para **boleta a "varios"** (cliente sin documento): `tipoDoc: "0"`, `numDoc: "00000000"`, `rznSocial: "VARIOS"`.
 - **Factura siempre requiere RUC** del cliente (`tipoDoc: "6"`).
+- **Boleta con RUC 10** (persona natural con negocio) es válida: se envía `tipoDoc: "6"` cuando el cliente no tiene DNI/CE/pasaporte. Ojo: la boleta no da crédito fiscal.
+- **Boleta con RUC 20 se rechaza** (validación en `SunatBuilder::cliente()` y en el form de facturación): a una persona jurídica le corresponde factura (Reglamento de Comprobantes de Pago, art. 4).
 - `precio_unitario` en la BD se asume **CON IGV incluido**. La división base/IGV se hace en el builder: `valor = precio / 1.18`, `igv = precio - valor`.
 - `unidad: "NIU"` funciona tanto para servicios como productos (la SUNAT lo acepta).
 
