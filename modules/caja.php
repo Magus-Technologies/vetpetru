@@ -22,7 +22,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array(($_POST['ajax'] ?? ''), ['
         $cab->execute([$caja_id]); $cab = $cab->fetch();
         if (!$cab) { echo json_encode(['ok'=>false,'error'=>'Caja no encontrada']); exit; }
 
-        $st = $db->prepare("SELECT * FROM movimientos_caja WHERE caja_id=? ORDER BY created_at ASC, id ASC");
+        $st = $db->prepare("SELECT mc.* FROM movimientos_caja mc LEFT JOIN ventas v ON v.id=mc.venta_id WHERE mc.caja_id=? AND (v.id IS NULL OR v.estado<>'anulado') ORDER BY mc.created_at ASC, mc.id ASC");
         $st->execute([$caja_id]); $movs = $st->fetchAll();
 
         $ing = 0; $egr = 0; $out = [];
@@ -181,7 +181,7 @@ $caja = $db->query("SELECT ca.*,u.nombre as cajero FROM cajas ca JOIN usuarios u
 $movimientos = [];
 $ingresos = $egresos = 0;
 if ($caja) {
-    $st = $db->prepare("SELECT * FROM movimientos_caja WHERE caja_id=? ORDER BY created_at DESC");
+    $st = $db->prepare("SELECT mc.* FROM movimientos_caja mc LEFT JOIN ventas v ON v.id=mc.venta_id WHERE mc.caja_id=? AND (v.id IS NULL OR v.estado<>'anulado') ORDER BY mc.created_at DESC");
     $st->execute([$caja['id']]); $movimientos = $st->fetchAll();
     $ingresos = array_sum(array_column(array_filter($movimientos,fn($m)=>$m['tipo']==='ingreso'),'monto'));
     $egresos  = array_sum(array_column(array_filter($movimientos,fn($m)=>$m['tipo']==='egreso'),'monto'));
@@ -190,12 +190,16 @@ if ($caja) {
 // Resumen por método de pago
 $resumen_metodo = [];
 if ($caja) {
-    $st = $db->prepare("SELECT metodo_pago,SUM(monto) as total FROM movimientos_caja WHERE caja_id=? AND tipo='ingreso' GROUP BY metodo_pago");
+    $st = $db->prepare("SELECT mc.metodo_pago,SUM(mc.monto) as total FROM movimientos_caja mc LEFT JOIN ventas v ON v.id=mc.venta_id WHERE mc.caja_id=? AND mc.tipo='ingreso' AND (v.id IS NULL OR v.estado<>'anulado') GROUP BY mc.metodo_pago");
     $st->execute([$caja['id']]); $resumen_metodo=$st->fetchAll();
 }
 
 // Historial de cajas
-$historial_cajas = $db->query("SELECT ca.*,u.nombre as cajero, (SELECT COALESCE(SUM(monto),0) FROM movimientos_caja WHERE caja_id=ca.id AND tipo='ingreso') as total_ingresos, (SELECT COALESCE(SUM(monto),0) FROM movimientos_caja WHERE caja_id=ca.id AND tipo='egreso') as total_egresos, (SELECT COUNT(*) FROM movimientos_caja WHERE caja_id=ca.id) as n_mov FROM cajas ca JOIN usuarios u ON u.id=ca.usuario_id WHERE 1=1$_caja_sw ORDER BY ca.id DESC LIMIT 15")->fetchAll();
+$historial_cajas = $db->query("SELECT ca.*,u.nombre as cajero,
+    (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc LEFT JOIN ventas v ON v.id=mc.venta_id WHERE mc.caja_id=ca.id AND mc.tipo='ingreso' AND (v.id IS NULL OR v.estado<>'anulado')) as total_ingresos,
+    (SELECT COALESCE(SUM(mc.monto),0) FROM movimientos_caja mc LEFT JOIN ventas v ON v.id=mc.venta_id WHERE mc.caja_id=ca.id AND mc.tipo='egreso' AND (v.id IS NULL OR v.estado<>'anulado')) as total_egresos,
+    (SELECT COUNT(*) FROM movimientos_caja mc LEFT JOIN ventas v ON v.id=mc.venta_id WHERE mc.caja_id=ca.id AND (v.id IS NULL OR v.estado<>'anulado')) as n_mov
+    FROM cajas ca JOIN usuarios u ON u.id=ca.usuario_id WHERE 1=1$_caja_sw ORDER BY ca.id DESC LIMIT 15")->fetchAll();
 $max_ingreso = max(array_column($historial_cajas,'total_ingresos') ?: [1]);
 
 $metodo_icons = ['efectivo'=>'💵','yape'=>'📱','plin'=>'📱','tarjeta_debito'=>'💳','tarjeta_credito'=>'💳','transferencia'=>'🏦'];
