@@ -179,6 +179,14 @@ try {
     }
 } catch(Exception $e) {}
 
+
+// Origen de la cita: distinguir reservas web de las agendadas en clínica
+try {
+    $_o = $db->query("SHOW COLUMNS FROM `citas` LIKE 'origen'")->fetchAll();
+    if (empty($_o)) $db->exec("ALTER TABLE `citas` ADD COLUMN origen ENUM('interno','web') NOT NULL DEFAULT 'interno'");
+} catch (Exception $e) {}
+
+
 // En modo día se ordena solo por hora; en los demás, por fecha y luego hora
 $order = ($modo === 'dia') ? "c.hora ASC" : "c.fecha ASC, c.hora ASC";
 $st = $db->prepare("SELECT c.*,m.nombre as mascota,m.especie,u.nombre as veterinario,cl.nombre as dueno,cl.telefono FROM citas c JOIN mascotas m ON m.id=c.mascota_id JOIN usuarios u ON u.id=c.veterinario_id JOIN clientes cl ON cl.id=m.cliente_id WHERE $where ORDER BY $order");
@@ -215,7 +223,10 @@ $_default_vet = $vets_sel[0] ?? null;
     <div class="form-row">
       <!-- Mascota buscador -->
       <div class="form-group" style="position:relative">
-        <label class="form-label required">Mascota</label>
+        <label class="form-label required" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Mascota</span>
+          <a href="javascript:void(0)" onclick="rrAbrir()" style="font-size:11px;font-weight:600;color:var(--primary);text-decoration:none">➕ Registrar nuevo</a>
+        </label>
         <input type="text" id="inp-mas-cita" class="form-input"
                placeholder="🐾 Buscar mascota..."
                value="<?= clean($_editing_mas['label']??'') ?>"
@@ -288,9 +299,15 @@ $_default_vet = $vets_sel[0] ?? null;
     <div class="flex gap-1"><button type="submit" class="btn btn-primary">💾 Guardar cita</button><a href="?p=citas" class="btn">Cancelar</a></div>
   </form>
 </div>
+
+<?php $RR_HID='hid-mas-cita'; $RR_INP='inp-mas-cita'; include __DIR__ . '/../includes/registro_rapido_modal.php'; ?>
+
 <script>
 var _MAS_CITA = <?= json_encode(array_values($_mascotas_js)) ?>;
 var _VET_CITA = <?= json_encode(array_values($_vets_js)) ?>;
+
+// Al crear una mascota desde el registro rápido, agregarla al buscador y seleccionarla
+window.rrOnCreated = function(d){ _MAS_CITA.unshift({id:d.mascota_id,label:d.label}); };
 document.addEventListener('DOMContentLoaded', function() {
     vetSearchSelect('inp-mas-cita','drop-mas-cita','hid-mas-cita', _MAS_CITA, 'label');
     vetSearchSelect('inp-vet-cita','drop-vet-cita','hid-vet-cita', _VET_CITA, 'label');
@@ -389,8 +406,17 @@ function previewRecur(){
           </td>
           <td><div class="flex items-center gap-1"><span style="font-size:18px"><?= $especie_icons[$c['especie']]??'🐾' ?></span><div><div class="td-main"><?= clean($c['mascota']) ?></div><div class="text-xs text-muted"><?= $c['duracion_minutos'] ?>min</div><?php if(!empty($c['sesion_numero'])): ?><div class="text-xs" style="color:#7c3aed;font-weight:600">🔁 Sesión <?= (int)$c['sesion_numero'] ?>/<?= (int)$c['total_sesiones'] ?></div><?php endif; ?></div></div></td>
           <td><div><?= clean($c['dueno']) ?></div><div class="text-xs text-muted"><?= clean($c['telefono']) ?></div></td>
-          <td><span class="badge <?= $tipo_badge[$c['tipo']]??'b-gray' ?>"><?= $tipo_labels[$c['tipo']]??$c['tipo'] ?></span></td>
-          <td class="text-muted"><?= clean($c['veterinario']) ?></td>
+
+<td>
+            <span class="badge <?= $tipo_badge[$c['tipo']]??'b-gray' ?>"><?= $tipo_labels[$c['tipo']]??$c['tipo'] ?></span>
+            <?php if(($c['origen']??'interno')==='web'): ?>
+              <span class="badge" style="background:#e0f2fe;color:#0369a1" title="Reservada por el cliente vía web">🌐 Web</span>
+            <?php else: ?>
+              <span class="badge" style="background:#f1f5f9;color:#64748b" title="Agendada en la clínica">🏥 Clínica</span>
+            <?php endif; ?>
+          </td>
+
+<td class="text-muted"><?= clean($c['veterinario']) ?></td>
           <td><select class="form-input" style="width:130px;padding:5px 8px;font-size:12px" onchange="cambiarEstado(<?= $c['id'] ?>,this.value)"><?php foreach(['pendiente','confirmada','atendida','cancelada','no_asistio'] as $e): ?><option value="<?= $e ?>" <?= $c['estado']===$e?'selected':'' ?>><?= ucfirst(str_replace('_',' ',$e)) ?></option><?php endforeach; ?></select></td>
           <td><div class="flex gap-1">
             <?php if($c['estado']!=='atendida'): ?><a href="?p=historial&action=nueva&cita_id=<?= $c['id'] ?>&mascota_id=<?= $c['mascota_id'] ?>" class="btn btn-xs btn-primary">Atender</a><?php endif; ?>

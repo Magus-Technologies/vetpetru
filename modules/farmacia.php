@@ -28,7 +28,7 @@ function fm_leer_excel_xml($raw) {
             if ($data !== null && count($data)) $val = (string)$data;
             $celdas[$colIdx] = $val; $colIdx++;
         }
-        if ($celdas) { ksort($celdas); $filas[] = array_values($celdas); }
+        if ($celdas) { ksort($celdas); $_max=max(array_keys($celdas)); $_fila=[]; for($_j=0;$_j<=$_max;$_j++) $_fila[$_j]=$celdas[$_j]??""; $filas[] = $_fila; }
     }
     return $filas;
 }
@@ -76,7 +76,7 @@ function fm_leer_xlsx($path) {
             elseif ($tipo === 'inlineStr' && isset($c->is->t)) { $v = (string)$c->is->t; }
             $celdas[$colIdx] = $v; $colIdx++;
         }
-        if ($celdas) { ksort($celdas); $filas[] = array_values($celdas); }
+        if ($celdas) { ksort($celdas); $_max=max(array_keys($celdas)); $_fila=[]; for($_j=0;$_j<=$_max;$_j++) $_fila[$_j]=$celdas[$_j]??""; $filas[] = $_fila; }
     }
     return $filas;
 }
@@ -149,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // ── IMPORTAR productos de farmacia masivamente ──
     if ($pa === 'importar_farmacia') {
-        $importados = 0; $omitidos = 0; $err_imp = '';
+        $importados = 0; $omitidos = 0; $err_imp = ''; $errores_imp = []; $actualizados = 0;
         try {
             if (empty($_FILES['archivo']['tmp_name'])) throw new Exception('No se recibió ningún archivo.');
             $tmp = $_FILES['archivo']['tmp_name'];
@@ -157,6 +157,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $filas = [];
             if (substr($raw,0,2) === 'PK') {
                 $filas = fm_leer_xlsx($tmp);
+            } elseif (substr($raw,0,4) === "\xD0\xCF\x11\xE0") {
+                throw new Exception('El archivo es un Excel binario antiguo (.xls 97-2003), que no es compatible. Ábrelo en Excel y usa «Guardar como» → «Libro de Excel (.xlsx)» o «CSV (delimitado por comas)», o usa la plantilla que descargas del sistema. Luego vuelve a importarlo.');
             } elseif (stripos($raw,'<?xml') !== false || stripos($raw,'spreadsheet') !== false) {
                 $filas = fm_leer_excel_xml($raw);
             } else {
@@ -193,6 +195,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  (categoria_id,nombre,descripcion,presentacion,laboratorio,codigo_barras,precio_costo,precio_venta,stock,stock_minimo,lote,fecha_vencimiento,sede_id)
                  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
             );
+            // UPSERT: si el producto ya existe (por código de barras o nombre) se ACTUALIZA en vez de duplicar.
+            $upd = $db->prepare(
+                "UPDATE productos SET categoria_id=?, nombre=?, descripcion=?, presentacion=?, laboratorio=?,
+                    codigo_barras = COALESCE(NULLIF(?,''), codigo_barras),
+                    precio_costo=?, precio_venta=?, stock=?, stock_minimo=?, lote=?, fecha_vencimiento=?, activo=1
+                 WHERE id=?"
+            );
+            $find_cb  = $db->prepare("SELECT id FROM productos WHERE codigo_barras=? AND codigo_barras<>'' AND sede_id=? LIMIT 1");
+            $find_nom = $db->prepare("SELECT id FROM productos WHERE nombre=? AND sede_id=? LIMIT 1");
+
+            // Parseo robusto de precios: soporta "1,500.00", "1.500,00", "S/ 1500", "1500", etc.
+            $fm_num = function($s) {
+                $s = trim((string)$s);
+                $s = preg_replace('/[^\d.,\-]/', '', $s); // quita S/, espacios, letras
+                if ($s === '' || $s === '-') return 0.0;
+                $lc = strrpos($s, ','); $ld = strrpos($s, '.');
+                if ($lc !== false && $ld !== false) {
+                    if ($lc > $ld) { $s = str_replace('.', '', $s); $s = str_replace(',', '.', $s); } // 1.500,00
+                    else           { $s = str_replace(',', '', $s); }                                  // 1,500.00
+                } elseif ($lc !== false) {
+                    if (preg_match('/,\d{1,2}$/', $s)) $s = str_replace(',', '.', $s); // 1,50 -> 1.50 (decimal)
+                    else                               $s = str_replace(',', '', $s);  // 1,500 -> 1500 (miles)
+                }
+                return (float)$s;
+            };
+            $errores_imp = [];       // detalle de filas saltadas
+            $MAX_DECIMAL = 99999999.99; // tope de DECIMAL(10,2)
 
             foreach ($filas as $f) {
                 $f = array_map(fn($v)=>trim((string)$v), $f);
@@ -209,8 +238,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $present     = $f[3] ?? '';
                 $laboratorio = $f[4] ?? '';
                 $cod_barras  = $f[5] ?? '';
-                $p_costo     = (float)str_replace([',','S/','s/',' '],['.','','',''], $f[6] ?? '0');
-                $p_venta     = (float)str_replace([',','S/','s/',' '],['.','','',''], $f[7] ?? '0');
+                $p_costo     = $fm_num($f[6] ?? '0');
+                $p_venta     = $fm_num($f[7] ?? '0');
                 $stock       = (int)($f[8] ?? 0);
                 $stock_min   = (int)($f[9] ?? 5);
                 $lote        = $f[10] ?? '';
@@ -225,32 +254,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     }
                 }
 
-                $ins->execute([$cat_id,$nombre,$descripcion,$present,$laboratorio,$cod_barras,$p_costo,$p_venta,$stock,$stock_min,$lote ?: null,$fecha_venc,$sede_destino]);
-                $importados++;
+                // Validar rango de precios (DECIMAL(10,2)). Evita el error 1264.
+                if ($p_costo < 0) $p_costo = 0;
+                if ($p_venta < 0) $p_venta = 0;
+                if ($p_costo > $MAX_DECIMAL || $p_venta > $MAX_DECIMAL) {
+                    $omitidos++;
+                    $errores_imp[] = "«{$nombre}»: precio fuera de rango (costo ".number_format($p_costo,2).", venta ".number_format($p_venta,2)."). Revisa que las columnas del archivo estén en orden y que no haya un código de barras en la columna de precio.";
+                    continue;
+                }
+
+                try {
+                    // ¿ya existe? -> por código de barras; si no tiene, por nombre (misma sede)
+                    $pid = 0;
+                    if ($cod_barras !== '') { $find_cb->execute([$cod_barras, $sede_destino]); $pid = (int)($find_cb->fetchColumn() ?: 0); }
+                    if (!$pid)              { $find_nom->execute([$nombre, $sede_destino]);     $pid = (int)($find_nom->fetchColumn() ?: 0); }
+
+                    if ($pid) {
+                        $upd->execute([$cat_id,$nombre,$descripcion,$present,$laboratorio,$cod_barras,$p_costo,$p_venta,$stock,$stock_min,$lote ?: null,$fecha_venc,$pid]);
+                        $actualizados++;
+                    } else {
+                        $ins->execute([$cat_id,$nombre,$descripcion,$present,$laboratorio,$cod_barras,$p_costo,$p_venta,$stock,$stock_min,$lote ?: null,$fecha_venc,$sede_destino]);
+                        $importados++;
+                    }
+                } catch (Exception $eRow) {
+                    $omitidos++;
+                    $errores_imp[] = "«{$nombre}»: ".$eRow->getMessage();
+                }
             }
         } catch(Exception $e) {
             $err_imp = $e->getMessage();
         }
-        $qs = 'p=farmacia&imp='.$importados.'&om='.$omitidos;
+        $qs = 'p=farmacia&imp='.$importados.'&act='.$actualizados.'&om='.$omitidos;
         if ($err_imp) $qs .= '&imperr='.urlencode(substr($err_imp,0,200));
+        if (!empty($errores_imp)) $qs .= '&impdet='.urlencode(substr(implode(' • ', array_slice($errores_imp,0,4)),0,500));
         if (!headers_sent()) { header('Location: '.BASE_URL.'/index.php?'.$qs); exit; }
         echo '<script>location.href='.json_encode(BASE_URL.'/index.php?'.$qs).';</script>'; exit;
     }
 
     if ($pa === 'save') {
         $id = (int)($_POST['id']??0);
-        $fields = ['categoria_id','nombre','descripcion','presentacion','laboratorio','stock','stock_minimo','precio_costo','precio_venta','lote','fecha_vencimiento'];
+        $fields = ['categoria_id','nombre','descripcion','presentacion','laboratorio','codigo_barras','stock','stock_minimo','precio_costo','precio_venta','lote','fecha_vencimiento'];
         $data=[]; foreach($fields as $f) $data[$f] = trim($_POST[$f]??'') ?: null;
-        $data['sede_id'] = getSede(); // sede activa, no la del usuario
-        if ($id) {
-            $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
-            $st = $db->prepare("UPDATE productos SET $sets WHERE id=:id"); $data['id']=$id;
-        } else {
-            $cols = implode(',', array_merge($fields,['sede_id']));
-            $pls  = implode(',', array_map(fn($f)=>":$f", array_merge($fields,['sede_id'])));
-            $st = $db->prepare("INSERT INTO productos ($cols) VALUES ($pls)");
+        $data['sede_id'] = getSede();
+        $ok_guardar = true;
+
+        // Validar que el código de barras no esté duplicado
+        if (!empty($data['codigo_barras'])) {
+            $sq = "SELECT nombre FROM productos WHERE codigo_barras = ? AND activo=1" . ($id ? " AND id <> ".(int)$id : "");
+            $cb = $db->prepare($sq); $cb->execute([$data['codigo_barras']]); $dup = $cb->fetchColumn();
+            if ($dup) {
+                $msg = 'dup_codigo:' . $dup;
+                $action = $id ? 'editar' : 'nuevo';
+                $editing = array_merge((array)($editing ?? []), $data, ['id'=>$id]);
+                $ok_guardar = false;
+            }
+            // También revisar contra petshop_productos (códigos únicos en todo el sistema)
+            if ($ok_guardar) try {
+                $sq2 = "SELECT nombre FROM petshop_productos WHERE codigo_barras = ? AND activo=1";
+                $cb2 = $db->prepare($sq2); $cb2->execute([$data['codigo_barras']]); $dup2 = $cb2->fetchColumn();
+                if ($dup2) {
+                    $msg = 'dup_codigo_ps:' . $dup2;
+                    $action = $id ? 'editar' : 'nuevo';
+                    $editing = array_merge((array)($editing ?? []), $data, ['id'=>$id]);
+                    $ok_guardar = false;
+                }
+            } catch(Exception $e){}
         }
-        $st->execute($data); $msg='success'; $action='list';
+
+        if ($ok_guardar) {
+            if ($id) {
+                $sets = implode(',', array_map(fn($f)=>"$f=:$f", $fields));
+                $st = $db->prepare("UPDATE productos SET $sets WHERE id=:id"); $data['id']=$id;
+            } else {
+                $cols = implode(',', array_merge($fields,['sede_id']));
+                $pls  = implode(',', array_map(fn($f)=>":$f", array_merge($fields,['sede_id'])));
+                $st = $db->prepare("INSERT INTO productos ($cols) VALUES ($pls)");
+            }
+            $st->execute($data); $msg='success'; $action='list';
+        }
     }
     if ($pa === 'movimiento') {
         $prod_id = (int)$_POST['producto_id'];
@@ -297,6 +378,12 @@ $bajos    = $db->query("SELECT COUNT(*) FROM productos WHERE stock <= stock_mini
 $total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM productos WHERE activo=1$_swf")->fetchColumn();
 ?>
 <?php if($msg==='success'): ?><div class="alert alert-success mb-2">✅ Operación realizada correctamente.</div><?php endif; ?>
+<?php if(is_string($msg) && strpos($msg,'dup_codigo:')===0): ?>
+<div class="alert alert-danger mb-2">⚠️ Ese código de barras ya está en uso por el producto de farmacia: <strong><?= clean(substr($msg,11)) ?></strong>. Cada código debe ser único.</div>
+<?php endif; ?>
+<?php if(is_string($msg) && strpos($msg,'dup_codigo_ps:')===0): ?>
+<div class="alert alert-danger mb-2">⚠️ Ese código de barras ya está en uso por el producto de Pet Shop: <strong><?= clean(substr($msg,14)) ?></strong>. Cada código debe ser único.</div>
+<?php endif; ?>
 
 <?php if(in_array($action,['nueva','editar'])): ?>
 <div class="card" style="max-width:680px">
@@ -317,6 +404,21 @@ $total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM producto
       <div class="form-group"><label class="form-label">Presentación</label><input class="form-input" name="presentacion" value="<?= clean($editing['presentacion']??'') ?>" placeholder="Ej: Tabletas x100"></div>
       <div class="form-group"><label class="form-label">Laboratorio</label><input class="form-input" name="laboratorio" value="<?= clean($editing['laboratorio']??'') ?>"></div>
     </div>
+
+    <!-- 📷 CÓDIGO DE BARRAS con escaneo y autogenerar -->
+    <div class="form-group">
+      <label class="form-label">Código de barras</label>
+      <div class="flex gap-1" style="align-items:stretch">
+        <input class="form-input" id="cb-input" name="codigo_barras" value="<?= clean($editing['codigo_barras']??'') ?>"
+               placeholder="Acerca el lector USB y escanea aquí, o escribe el código" autocomplete="off" style="flex:1">
+        <button type="button" class="btn" onclick="document.getElementById('cb-input').focus()" title="Hacer clic, luego acercar el lector USB al producto">📷 Escanear</button>
+        <button type="button" class="btn" onclick="cbAutogenerar()" title="Generar código interno automático (VET-F-0001)">⚡ Autogenerar</button>
+      </div>
+      <div class="text-xs text-muted mt-1">
+        Si el producto trae código del fabricante, escanéalo. Si no (preparados, genéricos), usa "Autogenerar" para crear un código interno tipo <code>VET-F-0001</code>.
+      </div>
+    </div>
+
     <div class="form-row">
       <div class="form-group"><label class="form-label">Stock actual *</label><input class="form-input" type="number" name="stock" value="<?= clean($editing['stock']??0) ?>" required></div>
       <div class="form-group"><label class="form-label">Stock mínimo</label><input class="form-input" type="number" name="stock_minimo" value="<?= clean($editing['stock_minimo']??5) ?>"></div>
@@ -333,6 +435,34 @@ $total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM producto
     <div class="flex gap-1"><button type="submit" class="btn btn-primary">💾 Guardar producto</button><a href="?p=farmacia" class="btn">Cancelar</a></div>
   </form>
 </div>
+
+<?php
+// Calcular el siguiente código interno disponible para autogenerar (VET-F-####)
+$_cb_next = 1;
+try {
+    $r = $db->query("SELECT MAX(CAST(SUBSTRING(codigo_barras,7) AS UNSIGNED)) AS m FROM productos WHERE codigo_barras LIKE 'VET-F-%'")->fetch();
+    $_cb_next = ((int)($r['m'] ?? 0)) + 1;
+} catch(Exception $e){}
+?>
+<script>
+function cbAutogenerar() {
+    var inp = document.getElementById('cb-input');
+    if (inp.value.trim() !== '' && !confirm('El campo ya tiene un código (' + inp.value + '). ¿Reemplazar con uno autogenerado?')) return;
+    var n = <?= (int)$_cb_next ?>;
+    inp.value = 'VET-F-' + String(n).padStart(4, '0');
+    inp.focus();
+}
+// Si el usuario abre el form de nuevo producto y empieza a "escanear" sin hacer clic en el campo,
+// algunos lectores envían el código tan rápido que el primer carácter puede perderse. Por eso,
+// si el campo está vacío al abrir, lo enfocamos automáticamente.
+document.addEventListener('DOMContentLoaded', function(){
+    var inp = document.getElementById('cb-input');
+    if (inp && !inp.value.trim() && '<?= $action ?>' === 'nuevo') {
+        // Enfocar después de un breve delay (para que otros listeners se monten primero)
+        setTimeout(function(){ inp.focus(); }, 100);
+    }
+});
+</script>
 
 <?php elseif($action==='movimiento' && isset($_GET['id'])): ?>
 <?php $prod_mov=$db->prepare("SELECT * FROM productos WHERE id=?"); $prod_mov->execute([(int)$_GET['id']]); $pm=$prod_mov->fetch(); ?>
@@ -380,8 +510,9 @@ $total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM producto
 <?php if (isset($_GET['imp'])): ?>
 <div class="card mb-2" style="padding:13px 16px;background:#f0fdf4;border-left:3px solid #10b981">
   <div style="font-size:13px;color:#065f46">
-    ✅ Importación completada: <strong><?= (int)$_GET['imp'] ?></strong> producto(s) agregado(s)<?= (int)($_GET['om']??0) ? ', '.(int)$_GET['om'].' omitido(s) (sin nombre)' : '' ?>.
+    ✅ Importación completada: <strong><?= (int)$_GET['imp'] ?></strong> agregado(s)<?= (int)($_GET['act']??0) ? ', <strong>'.(int)$_GET['act'].'</strong> actualizado(s)' : '' ?><?= (int)($_GET['om']??0) ? ', '.(int)$_GET['om'].' omitido(s)' : '' ?>.
     <?php if(!empty($_GET['imperr'])): ?><br><span style="color:#b91c1c">⚠️ <?= clean($_GET['imperr']) ?></span><?php endif; ?>
+    <?php if(!empty($_GET['impdet'])): ?><br><span style="color:#b45309;font-size:12px">Filas no importadas → <?= clean($_GET['impdet']) ?></span><?php endif; ?>
   </div>
 </div>
 <?php endif; ?>
@@ -389,7 +520,7 @@ $total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM producto
 <div class="card" style="padding:0">
   <div class="table-wrap">
     <table class="vtable">
-      <thead><tr><th>Producto</th><th>Categoría</th><th>Stock</th><th>Mín.</th><th>Precio venta</th><th>Lote</th><th>Vencimiento</th><th>Estado</th><th>Acciones</th></tr></thead>
+      <thead><tr><th>Producto</th><th>Código</th><th>Categoría</th><th>Stock</th><th>Mín.</th><th>Precio venta</th><th>Lote</th><th>Vencimiento</th><th>Estado</th><th>Acciones</th></tr></thead>
       <tbody>
         <?php foreach($productos as $p):
           $critico = $p['stock'] < $p['stock_minimo']/2;
@@ -401,6 +532,7 @@ $total_val= $db->query("SELECT COALESCE(SUM(stock*precio_costo),0) FROM producto
         ?>
         <tr>
           <td><div class="td-main"><?= clean($p['nombre']) ?></div><div class="text-xs text-muted"><?= clean($p['presentacion']??'') ?></div></td>
+          <td><?php if(!empty($p['codigo_barras'])): ?><code class="text-xs" style="background:#f0fdfa;color:#065f46;padding:2px 6px;border-radius:4px"><?= clean($p['codigo_barras']) ?></code><?php else: ?><span class="text-xs text-muted">—</span><?php endif; ?></td>
           <td><span class="badge b-gray"><?= clean($cat_map[$p['categoria_id']]??'—') ?></span></td>
           <td>
             <div class="font-bold" style="color:<?= $critico?'var(--red)':($bajo?'var(--amber)':'var(--text)') ?>"><?= $p['stock'] ?></div>

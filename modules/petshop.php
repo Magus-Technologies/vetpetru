@@ -195,7 +195,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // ── IMPORTAR productos masivamente (XLSX / XML Excel / CSV / TSV) ──
     if ($pa === 'importar_productos') {
-        $importados = 0; $omitidos = 0; $err_imp = ''; $errores_imp = [];
+        $importados = 0; $omitidos = 0; $err_imp = ''; $errores_imp = []; $actualizados = 0;
         try {
             if (empty($_FILES['archivo']['tmp_name'])) throw new Exception('No se recibió ningún archivo.');
             $tmp = $_FILES['archivo']['tmp_name'];
@@ -206,6 +206,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (substr($raw,0,2) === 'PK') {
                 // XLSX real (es un zip)
                 $filas = ps_leer_xlsx($tmp);
+            } elseif (substr($raw,0,4) === "\xD0\xCF\x11\xE0") {
+                throw new Exception('El archivo es un Excel binario antiguo (.xls 97-2003), que no es compatible. Ábrelo en Excel y usa «Guardar como» → «Libro de Excel (.xlsx)» o «CSV (delimitado por comas)», o usa la plantilla que descargas del sistema. Luego vuelve a importarlo.');
             } elseif (stripos($raw,'<?xml') !== false || stripos($raw,'spreadsheet') !== false) {
                 // XML SpreadsheetML (Excel 2003)
                 $filas = ps_leer_excel_xml($raw);
@@ -231,6 +233,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                  (categoria,nombre,descripcion,marca,contenido,precio_costo,precio_venta,stock,stock_minimo,codigo_barras"
                  .($tiene_sede ? ",sede_id" : "").")
                  VALUES (?,?,?,?,?,?,?,?,?,?".($tiene_sede ? ",?" : "").")"
+            );
+
+            // UPSERT: buscar existente por código de barras (o nombre) para ACTUALIZAR en vez de duplicar
+            $sedeCond = $tiene_sede ? " AND sede_id=?" : "";
+            $find_cb  = $db->prepare("SELECT id FROM petshop_productos WHERE codigo_barras=? AND codigo_barras<>''$sedeCond LIMIT 1");
+            $find_nom = $db->prepare("SELECT id FROM petshop_productos WHERE nombre=?$sedeCond LIMIT 1");
+            $upd = $db->prepare(
+                "UPDATE petshop_productos SET categoria=?, nombre=?, descripcion=?, marca=?, contenido=?,
+                    codigo_barras=COALESCE(NULLIF(?,''),codigo_barras),
+                    precio_costo=?, precio_venta=?, stock=?, stock_minimo=?, activo=1 WHERE id=?"
             );
 
             // Parseo robusto de precios: soporta "1,500.00", "1.500,00", "S/ 1500", "1500", "25,90"
@@ -280,11 +292,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     continue;
                 }
 
-                $params = [$categoria,$nombre,$descripcion,$marca,$contenido,$p_costo,$p_venta,$stock,$stock_min,$cod_barras];
-                if ($tiene_sede) $params[] = $sede_destino;
                 try {
-                    $ins->execute($params);
-                    $importados++;
+                    // ¿ya existe? por código de barras; si no, por nombre (misma sede)
+                    $pid = 0;
+                    if ($cod_barras !== '') { $find_cb->execute($tiene_sede ? [$cod_barras,$sede_destino] : [$cod_barras]); $pid = (int)($find_cb->fetchColumn() ?: 0); }
+                    if (!$pid)              { $find_nom->execute($tiene_sede ? [$nombre,$sede_destino] : [$nombre]);         $pid = (int)($find_nom->fetchColumn() ?: 0); }
+
+                    if ($pid) {
+                        $upd->execute([$categoria,$nombre,$descripcion,$marca,$contenido,$cod_barras,$p_costo,$p_venta,$stock,$stock_min,$pid]);
+                        $actualizados++;
+                    } else {
+                        $params = [$categoria,$nombre,$descripcion,$marca,$contenido,$p_costo,$p_venta,$stock,$stock_min,$cod_barras];
+                        if ($tiene_sede) $params[] = $sede_destino;
+                        $ins->execute($params);
+                        $importados++;
+                    }
                 } catch (Exception $eRow) {
                     $omitidos++;
                     $errores_imp[] = "«{$nombre}»: ".$eRow->getMessage();
@@ -294,7 +316,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $err_imp = $e->getMessage();
         }
         // Resultado por URL (PRG) para refrescar la lista
-        $qs = 'p=petshop&imp='.$importados.'&om='.$omitidos;
+        $qs = 'p=petshop&imp='.$importados.'&act='.$actualizados.'&om='.$omitidos;
         if ($err_imp) $qs .= '&imperr='.urlencode(substr($err_imp,0,200));
         if (!empty($errores_imp)) $qs .= '&impdet='.urlencode(substr(implode(' • ', array_slice($errores_imp,0,4)),0,500));
         if (!headers_sent()) { header('Location: '.BASE_URL.'/index.php?'.$qs); exit; }
@@ -634,7 +656,7 @@ document.addEventListener('DOMContentLoaded', function(){
 <?php if (isset($_GET['imp'])): ?>
 <div class="card" style="margin-bottom:14px;padding:13px 16px;background:#f0fdf4;border-left:3px solid #10b981">
   <div style="font-size:13px;color:#065f46">
-    ✅ Importación completada: <strong><?= (int)$_GET['imp'] ?></strong> producto(s) agregado(s)<?= (int)($_GET['om']??0) ? ', '.(int)$_GET['om'].' omitido(s) (sin nombre)' : '' ?>.
+    ✅ Importación completada: <strong><?= (int)$_GET['imp'] ?></strong> agregado(s)<?= (int)($_GET['act']??0) ? ', <strong>'.(int)$_GET['act'].'</strong> actualizado(s)' : '' ?><?= (int)($_GET['om']??0) ? ', '.(int)$_GET['om'].' omitido(s)' : '' ?>.
     <?php if(!empty($_GET['imperr'])): ?><br><span style="color:#b91c1c">⚠️ <?= clean($_GET['imperr']) ?></span><?php endif; ?>
     <?php if(!empty($_GET['impdet'])): ?><br><span style="color:#b45309;font-size:12px">Filas no importadas → <?= clean($_GET['impdet']) ?></span><?php endif; ?>
   </div>

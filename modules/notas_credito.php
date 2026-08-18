@@ -6,8 +6,9 @@ $user      = getUser();
 $action    = $_GET['action'] ?? 'lista';
 $id        = (int)($_GET['id'] ?? 0);
 
+// Las notas afectan comprobantes: comparten el permiso de facturación.
 if (!canView('facturacion')) {
-    $_SESSION['flash_error'] = 'No tenés permiso para acceder a este módulo.';
+    $_SESSION['flash_error'] = 'No tienes permiso para acceder a este módulo.';
     header('Location: ' . BASE_URL . '/index.php?p=dashboard'); exit;
 }
 
@@ -16,13 +17,49 @@ $sunat_svc = __DIR__ . '/../includes/sunat/SunatService.php';
 if (file_exists($sunat_cfg)) require_once $sunat_cfg;
 if (file_exists($sunat_svc)) require_once $sunat_svc;
 
+/**
+ * Serie de nota según la sede del comprobante afectado.
+ * Misma jerarquía que getSerieParaSede() en facturacion.php:
+ * configuracion_sede → configuracion global (solo sede 1) → prefijo + sede.
+ */
+function getSerieNotaParaSede($db, $tipo_nota, $sede_id) {
+    $clave = $tipo_nota === 'debito' ? 'serie_nota_debito' : 'serie_nota_credito';
+
+    try {
+        $st = $db->prepare("SELECT valor FROM configuracion_sede WHERE sede_id=? AND clave=?");
+        $st->execute([$sede_id, $clave]);
+        $v = $st->fetchColumn();
+        if ($v) return $v;
+    } catch (Exception $e) {}
+
+    if ($sede_id == 1) {
+        try {
+            $st = $db->prepare("SELECT valor FROM configuracion WHERE clave=?");
+            $st->execute([$clave]);
+            $v = $st->fetchColumn();
+            if ($v) return $v;
+        } catch (Exception $e) {}
+    }
+
+    $pref = $tipo_nota === 'debito' ? 'ND' : 'NC';
+    return $pref . str_pad((string)$sede_id, 3, '0', STR_PAD_LEFT);
+}
+
+$MOTIVOS = [
+    '01' => 'Anulación de la operación',
+    '02' => 'Anulación por error en el RUC',
+    '06' => 'Devolución total',
+    '07' => 'Devolución por ítem(s) de la operación',
+    '13' => 'Ajuste en operaciones de exportación',
+];
+
 // ─── POST HANDLER ─────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $pa = $_POST['action'] ?? '';
 
     if ($pa === 'crear') {
-        $venta_id   = (int)($_POST['venta_id']   ?? 0);
-        $tipo_nota  = $_POST['tipo_nota']  ?? 'credito';
+        $venta_id   = (int)($_POST['venta_id'] ?? 0);
+        $tipo_nota  = $_POST['tipo_nota'] ?? 'credito';
         $cod_motivo = trim($_POST['cod_motivo'] ?? '');
         $des_motivo = trim($_POST['des_motivo'] ?? '');
 
@@ -30,36 +67,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['flash_error'] = 'Tipo de nota inválido.';
             header('Location: ' . BASE_URL . '/index.php?p=notas_credito&action=nueva'); exit;
         }
-        if (!$venta_id || !$cod_motivo || !$des_motivo) {
-            $_SESSION['flash_error'] = 'Completá todos los campos requeridos.';
+        if (!$venta_id || !isset($MOTIVOS[$cod_motivo]) || $des_motivo === '') {
+            $_SESSION['flash_error'] = 'Completa todos los campos requeridos.';
             header('Location: ' . BASE_URL . '/index.php?p=notas_credito&action=nueva'); exit;
         }
 
-        $st = $db->prepare("SELECT * FROM ventas WHERE id=? AND tipo_comprobante IN('boleta','factura') AND sunat_xml IS NOT NULL");
+        $st = $db->prepare("
+            SELECT * FROM ventas
+            WHERE id=? AND tipo_comprobante IN('boleta','factura') AND sunat_xml IS NOT NULL
+        ");
         $st->execute([$venta_id]);
         $venta = $st->fetch();
         if (!$venta) {
             $_SESSION['flash_error'] = 'Comprobante no encontrado o sin XML generado.';
             header('Location: ' . BASE_URL . '/index.php?p=notas_credito&action=nueva'); exit;
         }
-        if ($venta['estado'] === 'anulado') {
-            $_SESSION['flash_error'] = 'Este comprobante ya está anulado — tiene una nota de crédito aceptada.';
+        if (!verTodasSedes() && (int)($venta['sede_id'] ?? 1) !== getSede()) {
+            $_SESSION['flash_error'] = 'Ese comprobante pertenece a otra sede.';
             header('Location: ' . BASE_URL . '/index.php?p=notas_credito&action=nueva'); exit;
         }
-
-        $stNC = $db->prepare("SELECT id FROM notas_credito WHERE venta_id=? AND tipo_nota='credito' AND sunat_estado='aceptado' LIMIT 1");
+        // Un comprobante anulado localmente NO se excluye: la baja ante SUNAT
+        // solo existe con nota de crédito, así que sigue necesitando emitirla.
+        // El duplicado real lo bloquea la comprobación de abajo.
+        $stNC = $db->prepare("
+            SELECT id FROM notas_credito
+            WHERE venta_id=? AND tipo_nota='credito' AND sunat_estado='aceptado' LIMIT 1
+        ");
         $stNC->execute([$venta_id]);
         if ($stNC->fetch()) {
             $_SESSION['flash_error'] = 'Este comprobante ya tiene una nota de crédito aceptada por SUNAT.';
             header('Location: ' . BASE_URL . '/index.php?p=notas_credito&action=nueva'); exit;
         }
 
-        if ($tipo_nota === 'credito') {
-            $serie = $venta['tipo_comprobante'] === 'factura' ? SUNAT_SERIE_NC_FACTURA : SUNAT_SERIE_NC_BOLETA;
-        } else {
-            $serie = $venta['tipo_comprobante'] === 'factura' ? SUNAT_SERIE_ND_FACTURA : SUNAT_SERIE_ND_BOLETA;
-        }
-
+        $serie  = getSerieNotaParaSede($db, $tipo_nota, (int)($venta['sede_id'] ?? 1));
         $numero = SunatService::siguienteNumeroNota($db, $serie);
 
         $ins = $db->prepare("
@@ -72,12 +112,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         ]);
         $notaId = (int)$db->lastInsertId();
 
-        $_SESSION['flash_ok'] = 'Nota creada. Podés emitir el XML ahora.';
+        $_SESSION['flash_ok'] = 'Nota creada. Ya puedes generar el XML.';
         header('Location: ' . BASE_URL . '/index.php?p=notas_credito&action=ver&id=' . $notaId); exit;
     }
 
     if ($pa === 'emitir' || $pa === 'regenerar') {
-        $nid = (int)$_POST['id'];
+        $nid = (int)($_POST['id'] ?? 0);
         $r   = (new SunatService($db))->generarXmlNota($nid);
         if ($r['ok']) {
             $_SESSION['flash_ok'] = 'XML generado. Listo para enviar a SUNAT.';
@@ -88,7 +128,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 
     if ($pa === 'enviar_sunat') {
-        $nid = (int)$_POST['id'];
+        $nid = (int)($_POST['id'] ?? 0);
         $r   = (new SunatService($db))->enviarSunatNota($nid);
         if ($r['ok']) {
             $_SESSION['flash_ok'] = 'SUNAT aceptó la nota: ' . $r['mensaje'];
@@ -99,9 +139,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// ─── DESCARGA XML ─────────────────────────────────────────────────
+// ─── DESCARGA / VISTA DEL XML ─────────────────────────────────────
 if ($action === 'xml' && $id) {
-    $st = $db->prepare("SELECT * FROM notas_credito WHERE id=?");
+    $st = $db->prepare("
+        SELECT n.sunat_xml, n.serie, n.numero
+        FROM notas_credito n
+        JOIN ventas v ON n.venta_id = v.id
+        WHERE n.id=? AND " . sedeWhere('v')
+    );
     $st->execute([$id]);
     $nota = $st->fetch();
     if (!$nota || empty($nota['sunat_xml'])) {
@@ -116,12 +161,12 @@ if ($action === 'xml' && $id) {
 // ─── HTML OUTPUT ──────────────────────────────────────────────────
 require_once __DIR__ . '/../includes/header.php';
 
-if (isset($_SESSION['flash_ok'])) {
-    echo '<div class="alert alert-success mb-2">✅ ' . htmlspecialchars($_SESSION['flash_ok']) . '</div>';
-    unset($_SESSION['flash_ok']);
-} elseif (isset($_SESSION['flash_error'])) {
-    echo '<div class="alert alert-warn mb-2">⚠️ ' . htmlspecialchars($_SESSION['flash_error']) . '</div>';
+if (isset($_SESSION['flash_error'])) {
+    echo '<div class="alert alert-danger mb-3" style="padding:12px 16px;border-radius:8px;font-size:14px">❌ ' . htmlspecialchars($_SESSION['flash_error']) . '</div>';
     unset($_SESSION['flash_error']);
+} elseif (isset($_SESSION['flash_ok'])) {
+    echo '<div class="alert alert-success mb-3" style="padding:12px 16px;border-radius:8px;font-size:14px">✅ ' . htmlspecialchars($_SESSION['flash_ok']) . '</div>';
+    unset($_SESSION['flash_ok']);
 }
 
 // ─── LISTA ────────────────────────────────────────────────────────
@@ -131,10 +176,10 @@ if ($action === 'lista') {
     $ftipo   = $_GET['tipo']    ?? '';
     $fsun    = $_GET['sun']     ?? '';
 
-    $where  = "WHERE DATE(n.created_at) BETWEEN ? AND ?";
+    $where  = "WHERE DATE(n.created_at) BETWEEN ? AND ? AND " . sedeWhere('v');
     $params = [$fecha_d, $fecha_h];
-    if ($ftipo) { $where .= " AND n.tipo_nota=?"; $params[] = $ftipo; }
-    if ($fsun)  { $where .= " AND n.sunat_estado=?"; $params[] = $fsun; }
+    if ($ftipo) { $where .= " AND n.tipo_nota=?";    $params[] = $ftipo; }
+    if ($fsun)  { $where .= " AND n.sunat_estado=?"; $params[] = $fsun;  }
 
     $st = $db->prepare("
         SELECT n.*,
@@ -243,8 +288,8 @@ if ($action === 'lista') {
         FROM notas_credito n
         JOIN ventas v ON n.venta_id = v.id
         JOIN clientes c ON v.cliente_id = c.id
-        WHERE n.id=?
-    ");
+        WHERE n.id=? AND " . sedeWhere('v')
+    );
     $st->execute([$id]);
     $nota = $st->fetch();
 
@@ -256,13 +301,6 @@ if ($action === 'lista') {
         $sCl = $se==='aceptado' ? 'b-teal' : ($se==='rechazado' ? 'b-red' : ($se==='pendiente' ? 'b-amber' : 'b-gray'));
         $sl  = $se ? ucfirst($se) : 'Sin emitir';
         $tn  = $nota['tipo_nota'] === 'credito' ? 'NOTA DE CRÉDITO' : 'NOTA DE DÉBITO';
-        $motivos = [
-            '01' => 'Anulación de la operación',
-            '02' => 'Anulación por error en el RUC',
-            '06' => 'Devolución total',
-            '07' => 'Devolución por ítem(s) de la operación',
-            '13' => 'Ajuste en operaciones de exportación',
-        ];
 ?>
 <div class="card" style="max-width:760px">
   <div class="sec-header mb-3">
@@ -294,7 +332,7 @@ if ($action === 'lista') {
     <div class="text-xs text-muted mb-1">MOTIVO</div>
     <div class="font-bold">
       <span class="badge b-gray" style="margin-right:6px"><?= clean($nota['cod_motivo']) ?></span>
-      <?= clean($motivos[$nota['cod_motivo']] ?? $nota['cod_motivo']) ?>
+      <?= clean($MOTIVOS[$nota['cod_motivo']] ?? $nota['cod_motivo']) ?>
     </div>
     <div class="text-xs text-muted mt-2"><?= clean($nota['des_motivo']) ?></div>
   </div>
@@ -351,14 +389,16 @@ if ($action === 'lista') {
 
 // ─── NUEVA NOTA ───────────────────────────────────────────────────
 } elseif ($action === 'nueva') {
+    // Venta preseleccionada al llegar desde el detalle de facturación.
+    $venta_sel = (int)($_GET['venta_id'] ?? 0);
     $ventas = $db->query("
-        SELECT v.id, v.serie, v.numero, v.tipo_comprobante, v.total, v.fecha, v.sunat_estado,
+        SELECT v.id, v.serie, v.numero, v.tipo_comprobante, v.total, v.fecha, v.sunat_estado, v.sede_id, v.estado,
                c.nombre AS cliente
         FROM ventas v
         JOIN clientes c ON v.cliente_id = c.id
         WHERE v.tipo_comprobante IN('boleta','factura')
           AND v.sunat_xml IS NOT NULL
-          AND v.estado != 'anulado'
+          AND " . sedeWhere('v') . "
           AND NOT EXISTS (
               SELECT 1 FROM notas_credito nc
               WHERE nc.venta_id = v.id AND nc.tipo_nota='credito' AND nc.sunat_estado='aceptado'
@@ -366,6 +406,23 @@ if ($action === 'lista') {
         ORDER BY v.fecha DESC
         LIMIT 500
     ")->fetchAll();
+
+    // Llegó apuntando a un comprobante que ya no admite nota: hay que explicarlo.
+    if ($venta_sel && !array_filter($ventas, fn($v) => (int)$v['id'] === $venta_sel)) {
+        echo '<div class="alert alert-warn mb-2">⚠️ Ese comprobante ya tiene una nota de crédito aceptada por SUNAT, o pertenece a otra sede. Elige otro de la lista.</div>';
+        $venta_sel = 0;
+    }
+
+    // Series previsualizables por sede de cada comprobante.
+    $seriesPorSede = [];
+    foreach ($ventas as $v) {
+        $sid = (int)($v['sede_id'] ?? 1);
+        if (isset($seriesPorSede[$sid])) continue;
+        $seriesPorSede[$sid] = [
+            'credito' => getSerieNotaParaSede($db, 'credito', $sid),
+            'debito'  => getSerieNotaParaSede($db, 'debito',  $sid),
+        ];
+    }
 ?>
 <div class="card" style="max-width:900px">
   <div class="sec-header mb-3">
@@ -381,12 +438,11 @@ if ($action === 'lista') {
         <div class="form-group mb-3">
           <label class="form-label">Comprobante a afectar (con XML generado) *</label>
           <select name="venta_id" class="form-input" required id="selVenta">
-            <option value="">— Seleccioná un comprobante —</option>
+            <option value="">— Selecciona un comprobante —</option>
             <?php foreach ($ventas as $v): ?>
-              <option value="<?= $v['id'] ?>"
-                      data-tipo="<?= $v['tipo_comprobante'] ?>"
-                      data-total="<?= $v['total'] ?>">
+              <option value="<?= $v['id'] ?>" data-sede="<?= (int)($v['sede_id'] ?? 1) ?>" <?= $v['id'] == $venta_sel ? 'selected' : '' ?>>
                 [<?= strtoupper($v['sunat_estado'] ?? '') ?>]
+                <?= $v['estado'] === 'anulado' ? '⚠ ANULADO SIN NOTA · ' : '' ?>
                 <?= strtoupper($v['tipo_comprobante']) ?> ·
                 <?= clean($v['serie']) ?>-<?= str_pad((string)$v['numero'],8,'0',STR_PAD_LEFT) ?> ·
                 <?= clean($v['cliente']) ?> ·
@@ -396,25 +452,23 @@ if ($action === 'lista') {
             <?php endforeach; ?>
           </select>
           <?php if (empty($ventas)): ?>
-            <div class="text-xs text-muted mt-1" style="color:var(--amber)">⚠️ No hay comprobantes con XML generado. Emití una boleta o factura primero.</div>
+            <div class="text-xs text-muted mt-1" style="color:var(--amber)">⚠️ No hay comprobantes con XML generado. Emite una boleta o factura primero.</div>
           <?php endif; ?>
         </div>
 
         <div class="form-group mb-3">
           <label class="form-label">Código de motivo (catálogo SUNAT 09) *</label>
           <select name="cod_motivo" class="form-input" required>
-            <option value="">— Seleccioná el motivo —</option>
-            <option value="01">01 — Anulación de la operación</option>
-            <option value="02">02 — Anulación por error en el RUC</option>
-            <option value="06">06 — Devolución total</option>
-            <option value="07">07 — Devolución por ítem(s) de la operación</option>
-            <option value="13">13 — Ajuste en operaciones de exportación</option>
+            <option value="">— Selecciona el motivo —</option>
+            <?php foreach ($MOTIVOS as $cod => $desc): ?>
+              <option value="<?= $cod ?>"><?= $cod ?> — <?= clean($desc) ?></option>
+            <?php endforeach; ?>
           </select>
         </div>
 
         <div class="form-group">
           <label class="form-label">Descripción del motivo *</label>
-          <textarea name="des_motivo" class="form-input" rows="3" required placeholder="Describí brevemente el motivo de la nota..." style="resize:vertical"></textarea>
+          <textarea name="des_motivo" class="form-input" rows="3" required placeholder="Describe brevemente el motivo de la nota..." style="resize:vertical"></textarea>
         </div>
       </div>
 
@@ -448,23 +502,20 @@ if ($action === 'lista') {
 
 <script>
 (function(){
-  var rNC  = document.getElementById('rNC');
-  var rND  = document.getElementById('rND');
+  var rNC   = document.getElementById('rNC');
+  var rND   = document.getElementById('rND');
   var lblNC = document.getElementById('lblNC');
   var lblND = document.getElementById('lblND');
-  var inf  = document.getElementById('tipoInfo');
-  var pre  = document.getElementById('seriePreview');
-  var sel  = document.getElementById('selVenta');
+  var inf   = document.getElementById('tipoInfo');
+  var pre   = document.getElementById('seriePreview');
+  var sel   = document.getElementById('selVenta');
 
-  var seriesMap = {
-    credito: { factura: '<?= defined('SUNAT_SERIE_NC_FACTURA') ? SUNAT_SERIE_NC_FACTURA : 'FC01' ?>', boleta: '<?= defined('SUNAT_SERIE_NC_BOLETA') ? SUNAT_SERIE_NC_BOLETA : 'BC01' ?>' },
-    debito:  { factura: '<?= defined('SUNAT_SERIE_ND_FACTURA') ? SUNAT_SERIE_ND_FACTURA : 'FD01' ?>', boleta: '<?= defined('SUNAT_SERIE_ND_BOLETA') ? SUNAT_SERIE_ND_BOLETA : 'BD01' ?>' }
-  };
+  var seriesPorSede = <?= json_encode($seriesPorSede, JSON_UNESCAPED_UNICODE) ?>;
 
   function update() {
-    var tipo   = rNC.checked ? 'credito' : 'debito';
-    var opt    = sel.options[sel.selectedIndex];
-    var tipDoc = opt ? (opt.dataset.tipo || '') : '';
+    var tipo = rNC.checked ? 'credito' : 'debito';
+    var opt  = sel.options[sel.selectedIndex];
+    var sede = opt ? (opt.dataset.sede || '') : '';
 
     if (tipo === 'credito') {
       lblNC.className = 'btn btn-primary';
@@ -476,8 +527,8 @@ if ($action === 'lista') {
       inf.innerHTML = 'ℹ <strong>Débito:</strong> aumenta el importe del comprobante original (cobros adicionales).';
     }
 
-    pre.textContent = (tipDoc && seriesMap[tipo] && seriesMap[tipo][tipDoc])
-      ? '# Serie: ' + seriesMap[tipo][tipDoc]
+    pre.textContent = (sede && seriesPorSede[sede] && seriesPorSede[sede][tipo])
+      ? '# Serie: ' + seriesPorSede[sede][tipo]
       : '# Serie asignada automáticamente al guardar.';
   }
 
