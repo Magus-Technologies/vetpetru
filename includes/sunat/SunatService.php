@@ -50,7 +50,7 @@ class SunatService
 
         $gen = $this->client->generarComprobante($payload);
         if (empty($gen['estado'])) {
-            $msg = $gen['mensaje'] ?? 'Error al generar XML.';
+            $msg = $this->mensajeConDetalle($gen, 'Error al generar XML.');
             $this->marcarRechazada($ventaId, $msg);
             return ['ok' => false, 'mensaje' => $msg, 'detalle' => $gen];
         }
@@ -144,7 +144,7 @@ class SunatService
 
         $gen = $this->client->generarNota($payload);
         if (empty($gen['estado'])) {
-            $msg = $gen['mensaje'] ?? 'Error al generar XML de nota.';
+            $msg = $this->mensajeConDetalle($gen, 'Error al generar XML de nota.');
             $this->marcarNotaEstado($notaId, 'rechazado', $msg);
             return ['ok' => false, 'mensaje' => $msg, 'detalle' => $gen];
         }
@@ -255,6 +255,27 @@ class SunatService
             WHERE id=?
         ");
         $st->execute([$hash, $qr, $xml, $cdr, $msg, $id]);
+    }
+
+    /**
+     * Compone el mensaje de error incluyendo el detalle de validación que
+     * devuelve la API (`errores`), para que la UI no muestre solo el genérico.
+     */
+    private function mensajeConDetalle(array $res, string $porDefecto): string
+    {
+        $msg = (string) ($res['mensaje'] ?? $porDefecto);
+        if (!empty($res['errores']) && is_array($res['errores'])) {
+            $partes = [];
+            foreach ($res['errores'] as $campo => $lista) {
+                foreach ((array) $lista as $e) {
+                    $partes[] = $campo . ': ' . $e;
+                }
+            }
+            if ($partes) {
+                $msg .= ' → ' . implode(' | ', $partes);
+            }
+        }
+        return $msg;
     }
 
     private function marcarRechazada(int $id, string $msg, string $hash = '', string $qr = '', string $xml = ''): void
