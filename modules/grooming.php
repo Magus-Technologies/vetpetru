@@ -250,9 +250,9 @@ if (!$groom_sel && !empty($all_groomings)) {
 ?>
 
 <style>
-.gr-layout { display:grid; grid-template-columns:320px 1fr; gap:0; height:calc(100vh - 130px); background:var(--bg2); border:1px solid var(--border); border-radius:16px; overflow:hidden; }
+.gr-layout { display:grid; grid-template-columns:320px 1fr; gap:0; align-items:start; min-height:420px; background:var(--bg2); border:1px solid var(--border); border-radius:16px; overflow:hidden; }
 /* Lista izquierda */
-.gr-list { border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+.gr-list { border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; max-height:calc(100vh - 175px); }
 .gr-list-head { padding:14px 16px; border-bottom:1px solid var(--border); flex-shrink:0; background:var(--bg2); }
 .gr-search { display:flex; align-items:center; gap:8px; background:var(--bg3); border:1.5px solid var(--border); border-radius:8px; padding:7px 12px; }
 .gr-search input { border:none; background:transparent; outline:none; font-size:12px; color:var(--text); width:100%; font-family:var(--font); }
@@ -280,7 +280,10 @@ if (!$groom_sel && !empty($all_groomings)) {
 .gr-estado-dot { width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:3px; }
 
 /* Panel detalle derecho */
-.gr-detail { overflow-y:auto; display:flex; flex-direction:column; }
+.gr-detail { display:flex; flex-direction:column; }
+/* Barra de acciones (siempre visible, debajo del encabezado) */
+.gr-actions-bar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding:13px 24px; border-bottom:1px solid var(--border); background:var(--bg2); }
+.gr-act-primary { background:#10b981; border-color:#10b981; color:#fff; font-weight:700; }
 .gr-det-head { padding:20px 24px; border-bottom:1px solid var(--border); flex-shrink:0; }
 .gr-det-body { padding:20px 24px; flex:1; overflow-y:auto; }
 .gr-det-grid { display:grid; grid-template-columns:1fr 1fr; gap:0; margin-bottom:16px; }
@@ -304,8 +307,38 @@ if (!$groom_sel && !empty($all_groomings)) {
 /* Cambio de estado rápido */
 .gr-estado-btns { display:flex; gap:6px; flex-wrap:wrap; }
 .gr-est-btn { padding:6px 14px; border-radius:999px; font-size:11px; font-weight:700; border:1.5px solid; cursor:pointer; background:transparent; font-family:var(--font); transition:all .15s; }
+
+/* Botón "Volver a la lista" — solo visible en móvil */
+.gr-back-btn { display:none; align-items:center; gap:6px; font-size:13px; font-weight:700; color:var(--primary); background:var(--bg3); border:1px solid var(--border); border-radius:9px; padding:10px 14px; margin:14px 16px 0; text-decoration:none; width:calc(100% - 32px); box-sizing:border-box; }
+
+/* ─────────── RESPONSIVE MÓVIL / TABLET ─────────── */
+@media (max-width:860px) {
+  /* Stats en 2 columnas */
+  .gr-stats { grid-template-columns:repeat(2,1fr)!important; gap:10px!important; }
+  /* El master-detail deja de ser rígido: se apila y crece con el contenido */
+  .gr-layout { display:block!important; height:auto!important; border:none!important; border-radius:0!important; background:transparent!important; overflow:visible!important; }
+  .gr-list { border-right:none!important; border:1px solid var(--border); border-radius:14px; overflow:hidden; max-height:none!important; }
+  .gr-scroll { overflow:visible!important; }
+  .gr-detail { border:1px solid var(--border); border-radius:14px; overflow:hidden; height:auto; }
+  .gr-det-body { overflow:visible!important; }
+  .gr-det-grid { grid-template-columns:1fr!important; gap:0!important; }
+  .gr-det-grid > .gr-det-box:first-child { padding-right:0!important; padding-bottom:14px; border-bottom:1px solid var(--border); margin-bottom:14px; }
+  .gr-det-grid > .gr-det-box:last-child { border-left:none!important; padding-left:0!important; }
+  .gr-det-val { max-width:60%; }
+  .gr-actions-bar { padding:12px 16px; }
+  .gr-actions-bar .btn { flex:1 1 42%; justify-content:center; }
+  .gr-actions-bar form { margin-left:0!important; flex:1 1 42%; }
+  .gr-actions-bar form .btn { width:100%; }
+  /* Alternancia lista ⇄ detalle (tipo app) */
+  .gr-wrap.show-detail .gr-stats,
+  .gr-wrap.show-detail .gr-topbar,
+  .gr-wrap.show-detail .gr-list { display:none!important; }
+  .gr-wrap.show-list .gr-detail { display:none!important; }
+  .gr-back-btn { display:flex; }
+}
 </style>
 
+<div class="gr-wrap <?= isset($_GET['gid'])?'show-detail':'show-list' ?>">
 <!-- Stats -->
 <div class="gr-stats" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px">
   <?php foreach(['programado'=>['icon'=>'📅','label'=>'Programados','col'=>'#3b82f6'],'en_proceso'=>['icon'=>'✂️','label'=>'En proceso','col'=>'#f59e0b'],'completado'=>['icon'=>'✅','label'=>'Completados','col'=>'#10b981'],'cancelado'=>['icon'=>'✕','label'=>'Cancelados','col'=>'#ef4444']] as $k=>$v): ?>
@@ -317,7 +350,7 @@ if (!$groom_sel && !empty($all_groomings)) {
 </div>
 
 <!-- Barra superior -->
-<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+<div class="gr-topbar" style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
   <div>
     <div class="page-title" style="font-size:18px">✨ Grooming / Peluquería</div>
     <div class="page-desc"><?= count($all_groomings) ?> servicios registrados</div>
@@ -420,21 +453,27 @@ if (!$groom_sel && !empty($all_groomings)) {
                ? BASE_URL.'/public/uploads/'.$groom_sel['foto_mascota'] : null;
       $tel_det = preg_replace('/[^0-9]/','',ltrim($groom_sel['telefono'],'+'));
       if(strlen($tel_det)<11) $tel_det='51'.$tel_det;
-      // Mensaje de WhatsApp: usa la plantilla EDITABLE del módulo WhatsApp (Grooming/Baño)
-      $wa_clinica = 'VetPro'; $wa_tpl = '';
+      // Mensajes de WhatsApp: usan las plantillas EDITABLES del módulo WhatsApp.
+      //  - wa_tpl_grooming_cita  → confirmación de la cita de grooming
+      //  - wa_tpl_grooming       → aviso de recojo ("ya está listo")
+      $wa_clinica = 'VetPro'; $wa_tpl = ''; $wa_tpl_cita = '';
       try {
-        $_cfg = $db->query("SELECT clave,valor FROM configuracion WHERE clave IN ('nombre_clinica','clinica_nombre','wa_tpl_grooming')")->fetchAll(PDO::FETCH_KEY_PAIR);
+        $_cfg = $db->query("SELECT clave,valor FROM configuracion WHERE clave IN ('nombre_clinica','clinica_nombre','wa_tpl_grooming','wa_tpl_grooming_cita')")->fetchAll(PDO::FETCH_KEY_PAIR);
         foreach (['nombre_clinica','clinica_nombre'] as $_k) {
           if (!empty(trim($_cfg[$_k] ?? ''))) { $wa_clinica = trim($_cfg[$_k]); break; }
         }
-        $wa_tpl = trim($_cfg['wa_tpl_grooming'] ?? '');
+        $wa_tpl      = trim($_cfg['wa_tpl_grooming'] ?? '');
+        $wa_tpl_cita = trim($_cfg['wa_tpl_grooming_cita'] ?? '');
       } catch (Exception $e) {}
       if ($wa_tpl === '') {
-        $wa_tpl = "✂️ *Grooming — {clinica}*\n\nHola {nombre_cliente} 👋\n\n¡*{nombre_mascota}* ya está listo! 🛁✨\n\n🧼 *Servicio:* {servicio}\n📅 *Fecha:* {fecha}\n🕐 *Hora:* {hora}\n💰 *Total:* S/. {precio}\n\nPuedes pasar a recogerlo cuando gustes.\n\n{clinica} 🐾";
+        $wa_tpl = "🛁 *Grooming — {clinica}*\n\nHola {nombre_cliente} 👋\n\n¡*{nombre_mascota}* ya está listo! 🛁✨\n\n🧼 *Servicio:* {servicio}\n📅 *Fecha:* {fecha}\n🕐 *Hora:* {hora}\n💰 *Total:* S/. {precio}\n\nPuedes pasar a recogerlo cuando gustes.\n\n{clinica} 🐾";
+      }
+      if ($wa_tpl_cita === '') {
+        $wa_tpl_cita = "✂️ *Cita de Grooming — {clinica}*\n\nHola {nombre_cliente} 👋\n\nTe confirmamos la cita de *{nombre_mascota}* 🐾\n\n🧼 *Servicio:* {servicio}\n📅 *Fecha:* {fecha}\n🕐 *Hora:* {hora}\n\nPor favor llega unos minutos antes.\n_Responde si necesitas reprogramar._\n\n{clinica} 🐾";
       }
       $_serv_txt = ($servicio_labels[$groom_sel['tipo_servicio']] ?? $groom_sel['tipo_servicio'])
                  . (!empty($groom_sel['tipo_corte']) ? ' — '.$groom_sel['tipo_corte'] : '');
-      $wa_msg = strtr($wa_tpl, [
+      $_wa_map = [
         '{clinica}'        => $wa_clinica,
         '{veterinaria}'    => $wa_clinica,
         '{nombre_cliente}' => (string)$groom_sel['dueno'],
@@ -444,7 +483,14 @@ if (!$groom_sel && !empty($all_groomings)) {
         '{hora}'           => date('H:i', strtotime($groom_sel['fecha'])),
         '{precio}'         => number_format((float)($groom_sel['precio'] ?? 0), 2),
         '{veterinario}'    => (string)($groom_sel['groomer'] ?? ''),
-      ]);
+      ];
+      $wa_msg      = strtr($wa_tpl, $_wa_map);       // recojo ("ya está listo")
+      $wa_msg_cita = strtr($wa_tpl_cita, $_wa_map);  // confirmación de cita
+      // URLs de WhatsApp Web. Solo si el teléfono tiene dígitos suficientes.
+      $_tel_raw     = preg_replace('/[^0-9]/', '', (string)($groom_sel['telefono'] ?? ''));
+      $_tel_ok      = (strlen($_tel_raw) >= 6);
+      $wa_url_listo = $_tel_ok ? 'https://wa.me/'.$tel_det.'?text='.rawurlencode($wa_msg) : '';
+      $wa_url_cita  = $_tel_ok ? 'https://wa.me/'.$tel_det.'?text='.rawurlencode($wa_msg_cita) : '';
       $estado_cfg_det = [
         'programado'  => ['bg'=>'#dbeafe','color'=>'#1e3a8a','icon'=>'📅'],
         'en_proceso'  => ['bg'=>'#fef3c7','color'=>'#78350f','icon'=>'✂️'],
@@ -455,7 +501,10 @@ if (!$groom_sel && !empty($all_groomings)) {
     ?>
     <?php
       $banner_col = ['programado'=>'#3b82f6','en_proceso'=>'#f59e0b','completado'=>'#10b981','cancelado'=>'#ef4444'][$groom_sel['estado']] ?? '#3b82f6';
+      $back_url = '?p=grooming'.($filtro_estado?'&estado='.urlencode($filtro_estado):'').($filtro_q?'&q='.urlencode($filtro_q):'');
     ?>
+    <!-- Volver a la lista (solo móvil) -->
+    <a href="<?= $back_url ?>" class="gr-back-btn">← Volver a la lista</a>
     <!-- BANNER del servicio -->
     <div class="gr-det-head" style="background:<?= $banner_col ?>12;border-bottom:3px solid <?= $banner_col ?>">
       <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
@@ -500,6 +549,26 @@ if (!$groom_sel && !empty($all_groomings)) {
           <?php endforeach; ?>
         </div>
       </div>
+    </div>
+
+    <!-- ACCIONES (siempre visibles, debajo del encabezado) -->
+    <div class="gr-actions-bar">
+      <?php if(!in_array($groom_sel['estado'],['completado','cancelado'])): ?>
+      <button type="button" onclick="banoTerminado(<?= (int)$groom_sel['id'] ?>)" class="btn btn-sm gr-act-primary">🛁 Baño terminado + avisar</button>
+      <?php if($wa_url_cita): ?><a href="<?= $wa_url_cita ?>" target="_blank" class="btn btn-wa btn-sm">📅 Confirmar cita</a><?php endif; ?>
+      <?php else: ?>
+      <button type="button" onclick="avisarListo()" class="btn btn-wa btn-sm">💬 Avisar que ya está listo</button>
+      <?php endif; ?>
+      <a href="?p=grooming&action=editar&id=<?= $groom_sel['id'] ?>" class="btn btn-primary btn-sm">✏️ Editar</a>
+      <a href="?p=mascotas&action=ver&id=<?= $groom_sel['mascota_id'] ?>" class="btn btn-ghost btn-sm">🐾 Ficha</a>
+      <a href="?p=historial&mascota_id=<?= $groom_sel['mascota_id'] ?>" class="btn btn-ghost btn-sm">🏥 Historia</a>
+      <a href="https://wa.me/<?= $tel_det ?>" target="_blank" class="btn btn-ghost btn-sm">💬 Chat</a>
+      <form method="POST" style="display:inline;margin-left:auto">
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="id" value="<?= $groom_sel['id'] ?>">
+        <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--danger)"
+                onclick="return confirm('¿Eliminar este servicio de grooming?')">🗑️ Eliminar</button>
+      </form>
     </div>
 
     <!-- Cuerpo del detalle -->
@@ -575,19 +644,15 @@ if (!$groom_sel && !empty($all_groomings)) {
 
     </div>
 
-    <!-- Barra de acciones -->
-    <div class="gr-bottom-bar">
-      <a href="?p=grooming&action=editar&id=<?= $groom_sel['id'] ?>" class="btn btn-primary btn-sm">✏️ Editar servicio</a>
-      <a href="?p=mascotas&action=ver&id=<?= $groom_sel['mascota_id'] ?>" class="btn btn-ghost btn-sm">🐾 Ver ficha mascota</a>
-      <a href="?p=historial&mascota_id=<?= $groom_sel['mascota_id'] ?>" class="btn btn-ghost btn-sm">🏥 Historia clínica</a>
-      <a href="https://wa.me/<?= $tel_det ?>?text=<?= rawurlencode($wa_msg) ?>" target="_blank" class="btn btn-wa btn-sm" style="margin-left:auto">💬 WhatsApp</a>
-      <form method="POST" style="display:inline">
-        <input type="hidden" name="action" value="delete">
-        <input type="hidden" name="id" value="<?= $groom_sel['id'] ?>">
-        <button type="submit" class="btn btn-ghost btn-sm" style="color:var(--danger)"
-                onclick="return confirm('¿Eliminar este servicio de grooming?')">🗑️ Eliminar</button>
-      </form>
-    </div>
+    <script>
+    // Datos del servicio seleccionado para el aviso por WhatsApp ("mascota lista")
+    window.GR_WA = {
+      id: <?= (int)$groom_sel['id'] ?>,
+      url: <?= json_encode($wa_url_listo, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES) ?>,
+      mascota: <?= json_encode((string)$groom_sel['mascota'], JSON_UNESCAPED_UNICODE) ?>,
+      dueno: <?= json_encode((string)$groom_sel['dueno'], JSON_UNESCAPED_UNICODE) ?>
+    };
+    </script>
 
     <?php else: ?>
     <div class="gr-empty">
@@ -600,6 +665,7 @@ if (!$groom_sel && !empty($all_groomings)) {
   </div>
 
 </div><!-- fin gr-layout -->
+</div><!-- fin gr-wrap -->
 
 <?php endif; ?>
 </div>
@@ -623,15 +689,42 @@ function setFilter(estado) {
 }
 
 async function cambiarEstado(id, estado) {
+  // Si se marca "completado", usar el flujo que además ofrece avisar por WhatsApp
+  if (estado === 'completado') { banoTerminado(id); return; }
   try {
     const fd = new FormData();
     fd.append('action', 'cambiar_estado');
     fd.append('id', id);
     fd.append('estado', estado);
-    const r = await fetch(window.location.href, { method:'POST', body:fd });
-    // Recargar para reflejar cambio
+    await fetch(window.location.href, { method:'POST', body:fd });
     window.location.reload();
   } catch(e) { alert('Error al cambiar estado.'); }
+}
+
+// Marca el servicio como completado (baño terminado) y ofrece avisar al dueño por WhatsApp.
+// La ventana de WhatsApp se abre DENTRO del clic para que el navegador no la bloquee.
+function banoTerminado(id){
+  var G = window.GR_WA || {};
+  var puedeAvisar = G.url && String(G.id) === String(id);
+  var enviar = false;
+  if (puedeAvisar) {
+    enviar = confirm('✅ Baño terminado.\n\n¿Avisar por WhatsApp a ' + (G.dueno||'el dueño') + ' que ' + (G.mascota||'la mascota') + ' ya está listo/a?');
+  }
+  if (enviar) { window.open(G.url, '_blank'); }
+  var fd = new FormData();
+  fd.append('action', 'cambiar_estado');
+  fd.append('id', id);
+  fd.append('estado', 'completado');
+  fetch(window.location.href, { method:'POST', body:fd })
+    .then(function(){ window.location.reload(); })
+    .catch(function(){ alert('Error al cambiar estado.'); });
+}
+
+// Solo abre WhatsApp con el aviso (para servicios ya completados).
+function avisarListo(){
+  var G = window.GR_WA || {};
+  if (G.url) { window.open(G.url, '_blank'); }
+  else { alert('Este cliente no tiene un teléfono válido registrado.'); }
 }
 
 function updateServUI(){
